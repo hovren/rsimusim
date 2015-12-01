@@ -2,16 +2,15 @@
 
 import time
 
-import matplotlib.pyplot as plt
 import numpy as np
 #from IPython import embed
 # Import all public symbols from IMUSim
-#from imusim.all import *
+
 from imusim.behaviours.imu import BasicIMUBehaviour
 from imusim.trajectories.base import StaticTrajectory
 from imusim.simulation.base import Simulation
 
-from mpu9250 import MPU9250IMU
+from rsimusim.mpu9250 import MPU9250IMU
 
 
 sim = Simulation()

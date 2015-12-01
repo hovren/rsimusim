@@ -1,11 +1,11 @@
-from camera import *
-from imusim.behaviours.imu import BasicIMUBehaviour
-from imusim.testing.random_data import RandomTrajectory
-from imusim.simulation.base import Simulation
-from imusim.platforms.imus import IdealIMU
-
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
+from imusim.behaviours.imu import BasicIMUBehaviour
+from imusim.platforms.imus import IdealIMU
+from imusim.simulation.base import Simulation
+from imusim.testing.random_data import RandomTrajectory
+
+from rsimusim.camera import *
 
 sim = Simulation()
 trajectory = RandomTrajectory()
