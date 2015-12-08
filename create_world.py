@@ -4,7 +4,7 @@ from collections import namedtuple
 import cv2
 import numpy as np
 from crisp import VideoStream, GyroStream, AtanCameraModel
-from crisp.rotations import axis_angle_to_rotation_matrix, slerp
+from crisp.rotations import axis_angle_to_rotation_matrix, quat_to_rotation_matrix, slerp
 from crisp.l3g4200d import post_process_L3G4200D_data
 from crisp.tracking import track_points
 
@@ -46,13 +46,52 @@ gyro.data = post_process_L3G4200D_data(gyro.data.T).T
 gt_dict = load_ground_truth('/home/hannes/Datasets/gopro-gyro-dataset/walk_reference.csv')
 gyro.data = correct_with_ground_truth(gyro.data, gt_dict)
 
-TrackItem = namedtuple('TrackItem', ['frame_num', 'point'])
+class Track(object):
+    __slots__ = ('id', 'frames', 'points')
 
-class Tracker(object):
+    _next_id = 0
+
+    def __init__(self, frame_num=None, point=None):
+        self.id = self.__class__._next_id
+        self.__class__._next_id += 1
+
+        self.frames = []
+        self.points = []
+
+        if frame_num is not None and point is not None:
+            self.add(frame_num, point)
+
+    @classmethod
+    def tracks_to_array(cls, track_list, frame_num):
+        pts = [track[frame_num] for track in track_list if frame_num in track]
+        return np.array(pts)
+
+    def add(self, framenum, point):
+        point = tuple(point)
+        assert (len(self.frames) < 1) or (framenum == self.frames[-1] + 1)
+        self.frames.append(framenum)
+        self.points.append(point)
+
+    def __contains__(self, frame_num):
+        return frame_num in self.frames
+
+    def __getitem__(self, frame_num):
+        try:
+            index = self.frames.index(frame_num)
+            return self.points[index]
+        except ValueError:
+            raise KeyError("Frame not in track")
+
+    def __repr__(self):
+        return '<Track id={}, from={:d}, to={:d} #frames={:d}>'.format(self.id,
+                                                                       self.frames[0],
+                                                                       self.frames[-1],
+                                                                       len(self.frames))
+
+class ImageTracker(object):
     def __init__(self):
         self.tracks = []
         self._current = None
-        self._current_index = None
         self._last_frame = None
 
     def update(self, frame, frame_num):
@@ -62,9 +101,11 @@ class Tracker(object):
         else:
             new_points = []
             # Track current points
+            last_frame = frame_num - 1
+            current_pts = Track.tracks_to_array(self._current, last_frame).reshape(1,-1,2)
             [_points, status, err] = cv2.calcOpticalFlowPyrLK(self._last_frame,
                                                               frame,
-                                                              self._current.reshape(-1,1,2),
+                                                              current_pts,
                                                               np.array([]))
 
             if _points is not None:
@@ -72,42 +113,71 @@ class Tracker(object):
 
                 valid = np.flatnonzero(status == 1)
                 for idx in valid:
-                    track_idx = self._current_index[idx]
+                    track = self._current[idx]
                     pt = _points[idx]
-                    self.tracks[track_idx].append(TrackItem(frame_num, pt))
+                    track.add(frame_num, pt)
 
-        # Append new points
+        # New points to new tracks
         for p in new_points:
-            item = TrackItem(frame_num, p)
-            self.tracks.append([item])
+            t = Track(frame_num, p)
+            self.tracks.append(t)
 
+        # Update list of currently OK tracks
         self._update_current(frame_num)
         self._last_frame = frame
 
     def _update_current(self, frame_num):
-        is_visible = lambda track, k: True if [ti for ti in track if ti.frame_num == k] else False
-        visible = [i for i, t in enumerate(self.tracks) if is_visible(t, frame_num)]
-        current = [[ti.point for ti in self.tracks[idx] if ti.frame_num == frame_num][0] for idx in visible]
-        #current = [[ti.point for ti in track if ti.frame_num == frame_num][0] for track in self.tracks if is_visible(track, frame_num)]
-        self._current_index = visible
-        self._current = np.vstack(current)
+        self._current = [track for track in self.tracks if frame_num in track]
 
+    def tracks_for_interval(self, a, b):
+        valid = []
+        for track in self.tracks:
+            for frame_num in range(a, b + 1):
+                if not frame_num in track:
+                    break
+            else:
+                valid.append(track)
+        return valid
 
-tracker = Tracker()
+frametime_to_sample = lambda t: gt_dict['Fg'] * (t + gt_dict['offset'])
 
-for i, frame in enumerate(video):
-    t_frame = i / camera_model.frame_rate
-    samp_index = gt_dict['Fg'] * (t_frame + gt_dict['offset'])
+tracker = ImageTracker()
+
+keyframe_interval = 15
+triangulate_back = 3
+
+keyframes = []
+Landmark = namedtuple('Landmark', ['world_point', 'visibility'])
+
+for frame_num, frame in enumerate(video):
+    t_frame = frame_num / camera_model.frame_rate
+    samp_index = frametime_to_sample(t_frame)
     q = gyro.rotation_at(samp_index, gt_dict['Fg'])
 
     frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    tracker.update(frame_gray, i)
+    tracker.update(frame_gray, frame_num)
 
-    if i == 60:
+    if frame_num >= triangulate_back and frame_num % keyframe_interval == 0:
+        tri_frame_num = frame_num - triangulate_back
+        tri_tracks = tracker.tracks_for_interval(tri_frame_num, frame_num)
+
+        current_keyframe = len(keyframes)
+
+        pts1 = np.vstack([track[tri_frame_num] for track in tri_tracks])
+        pts1 = camera_model.invert(pts1)
+        pts2 = np.vstack([track[frame_num] for track in tri_tracks])
+        pts2 = camera_model.invert(pts2)
+        t_tri_frame = tri_frame_num / camera_model.frame_rate
+        tri_samp_index = frametime_to_sample(t_tri_frame)
+        q_tri = gyro.rotation_at(tri_samp_index, gt_dict['Fg'])
+        R_tri = quat_to_rotation_matrix(q_tri)
+        R = quat_to_rotation_matrix(q)
+        dR = np.dot(R_tri, R)
+
+    if frame_num == 260:
         break
 
-tracker.tracks.sort(key=lambda track: len(track))
+tracker.tracks.sort(key=lambda track: len(track.frames))
 
-for track in tracker.tracks[:10]:
-    frames = [ti.frame_num for ti in track]
-    print len(frames), frames
+for track in tracker.tracks[:15]:
+    print track
