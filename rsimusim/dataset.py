@@ -51,8 +51,8 @@ class Dataset(object):
 
         # Integrating gyro measurments yields R(t) such that
         # X(t_0) = R^T(t_0)R(t_1) X(t_1)
+        orientations = orientations.unflipped()
         orientations = orientations.conjugate
-        #orientations = orientations.unflipped()
 
         # Splined trajectory seem to fail unless the samples are captured
         # uniformly over time. Resampling using SLERP fixes this.
