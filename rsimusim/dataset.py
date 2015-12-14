@@ -48,7 +48,11 @@ class Dataset(object):
         else:
             raise DatasetError("Expected a Nx3 or Nx4 array of gyro data, got {}".format('x'.join(map(str, gyro_data.shape))))
         orientations = QuaternionArray(orientations)
-        orientations = orientations.unflipped()
+
+        # Integrating gyro measurments yields R(t) such that
+        # X(t_0) = R^T(t_0)R(t_1) X(t_1)
+        orientations = orientations.conjugate
+        #orientations = orientations.unflipped()
 
         # Splined trajectory seem to fail unless the samples are captured
         # uniformly over time. Resampling using SLERP fixes this.

@@ -6,6 +6,8 @@ from crisp.l3g4200d import post_process_L3G4200D_data
 from rsimusim.dataset import Dataset
 from rsimusim.world import NvmModel
 
+from imusim.maths.quaternions import QuaternionArray, Quaternion
+
 import matplotlib.pyplot as plt
 
 def load_gyro(filepath):
@@ -31,7 +33,7 @@ gyro.data = crisp.l3g4200d.post_process_L3G4200D_data(gyro.data.T).T
 
 print 'gyro: Applying bias'
 bias = np.array([calibration_params['gbias_{}'.format(axis)] for axis in 'xyz'])
-gyro.data - bias.reshape(1,3)
+gyro.data = gyro.data + bias.reshape(1,3) # Yes, actually plus
 
 # Unpack R_g2c
 r = np.array([calibration_params['rot_{}'.format(axis)] for axis in 'xyz'])
@@ -39,10 +41,11 @@ theta = np.linalg.norm(r)
 v = r / theta
 R_g2c = crisp.rotations.axis_angle_to_rotation_matrix(v, theta)
 gyro.data = np.dot(R_g2c, gyro.data.T).T
-gyro_times = np.arange(gyro.num_samples) / calibration_params['gyro_rate'] + calibration_params['time_offset']
+gyro_times = np.arange(gyro.num_samples) / calibration_params['gyro_rate'] - calibration_params['time_offset']
 
 nvm_model = NvmModel.from_file('/home/hannes/Code/rs-imusim/walk_model.nvm')
 nvm_model.autoscale_walking()
+nvm_model.normalize_world()
 
 def plot_traj(traj, **kwargs):
     t = np.linspace(traj.startTime, traj.endTime, num=200)
@@ -50,16 +53,21 @@ def plot_traj(traj, **kwargs):
     for i in range(4):
         plt.subplot(2,2,i+1)
         plt.plot(t, orient.array[:, i], **kwargs)
+        for y in [-1, 0, 1]:
+            plt.axhline(y, linestyle='--', color='k')
 
 
 ds = Dataset()
 ds.position_from_nvm(nvm_model, camera_fps=30.0)
 print 'Orientations from NVM'
 ds.orientation_from_nvm(nvm_model, camera_fps=30.0)
-plot_traj(ds.trajectory, color='g')
+plt.figure()
+plot_traj(ds.trajectory, color='g', label='NVM')
 print 'Orientations from gyro'
 ds.orientation_from_gyro(gyro.data, gyro_times)
-plot_traj(ds.trajectory, color='r')
+plot_traj(ds.trajectory, color='r', label='gyro')
+plt.subplot(2,2,4)
+plt.legend(loc='best')
 plt.show()
 #ds.landmarks_from_nvm(nvm_model, camera_fps=30.0)
 #ds.visualize()

@@ -6,7 +6,7 @@ from imusim.environment.base import Environment
 from imusim.utilities.time_series import TimeSeries
 from imusim.trajectories.sampled import SampledPositionTrajectory
 from imusim.trajectories.splined import SplinedPositionTrajectory
-from imusim.maths.quaternions import Quaternion
+from imusim.maths.quaternions import Quaternion, QuaternionArray
 
 WorldObservation = namedtuple('WorldObservation', ['id', 'world_point'])
 
@@ -24,27 +24,21 @@ class NvmModel(object):
     def add_point(self, xyz, rgb, visibility):
         self.points.append(WorldPoint(xyz, rgb, visibility))
 
-    def _normalize_world(self):
-        # Sort cameras by filename
-        self.cameras.sort(key=lambda c: c.frame_num)
-
-        return
-
+    def normalize_world(self):
         # Rotate such that first camera is q=(1, 0, 0, 0)
         q0 = self.cameras[0].orientation
-        print 'Before'
-        print self.cameras[0].orientation, self.cameras[0].position
-        print self.cameras[170].orientation, self.cameras[170].position
-        p0 = self.cameras[0].position
+        #p0 = self.cameras[0].position
+        p0 = np.zeros((3,))
         def transform_position(x, p0, q0):
-            return q0.rotateFrame((x-p0).reshape(3,1)).reshape(-1)
+            #return q0.rotateFrame((x-p0).reshape(3,1)).reshape(-1)
+            return q0.rotateVector((x-p0).reshape(3,1)).reshape(-1)
 
         self.points = [WorldPoint(transform_position(p.position, p0, q0), p.color, p.visibility) for p in self.points]
+        print 'before', self.cameras[0].orientation
         self.cameras = [CameraPose(c.frame_num, q0.conjugate * c.orientation, transform_position(c.position, p0, q0))
                         for c in self.cameras]
-        print 'After'
-        print self.cameras[0].orientation, self.cameras[0].position
-        print self.cameras[170].orientation, self.cameras[170].position
+        print 'after', self.cameras[0].orientation
+
 
     def scale_world(self, factor):
         print 'Scaling with', factor
@@ -71,6 +65,10 @@ class NvmModel(object):
         return np.vstack([camera.position for camera in self.cameras]).T
 
     @property
+    def camera_orientations(self):
+        return QuaternionArray([camera.orientation for camera in self.cameras])
+
+    @property
     def camera_framenums(self):
         return [c.frame_num for c in self.cameras]
 
@@ -86,6 +84,7 @@ class NvmModel(object):
             instance.measurements = []
         num_cameras = 0
         num_points = 0
+        id_map = None
         state = 'header'
         for i, line in enumerate(open(filename, 'r')):
             line = line.strip()
@@ -134,6 +133,10 @@ class NvmModel(object):
                 instance.add_camera(frame_num, q, p)
 
                 if len(instance.cameras) >= num_cameras:
+                    # Sort cameras, but keep mapping
+                    sort_idx = np.argsort(instance.camera_framenums)
+                    id_map = {old : new for new, old in enumerate(sort_idx)}
+                    instance.cameras.sort(key=lambda c: c.frame_num)
                     state = 'num_points'
 
             elif state == 'num_points':
@@ -151,7 +154,8 @@ class NvmModel(object):
                 if not len(tokens) == 7 + num_meas * 4:
                     raise ValueError("Number of tokens: {}, expected {}".format(len(tokens), 7+num_meas*4))
                 image_indices = map(int, tokens[7::4])
-                visible_set = image_indices #set(image_indices)
+                # Remap image id:s to same order as in instance.cameras
+                visibility = [id_map[idx] for idx in image_indices]
                 if load_measurements:
                     meas_x = np.array(map(float, tokens[9::4]))
                     meas_y = np.array(map(float, tokens[10::4]))
@@ -159,7 +163,7 @@ class NvmModel(object):
                         raise ValueError("Failed to load measurements")
                     meas_xy = np.vstack((meas_x, meas_y))
                     instance.measurements.append(meas_xy)
-                instance.add_point(position, color, visible_set)
+                instance.add_point(position, color, visibility)
 
                 if len(instance.points) >= num_points:
                     state = 'model_done'
@@ -182,7 +186,7 @@ class NvmModel(object):
                 raise ValueError("Unknown state {}".format(state))
 
         # Done, return normalized instance
-        instance._normalize_world()
+        #instance._normalize_world()
         return instance
 
 class NonBlockableWorld(object):
