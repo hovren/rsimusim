@@ -1,0 +1,7 @@
+*.pyc
+*.sift
+*.mat
+*.jpg
+*.npy
+.idea
+.ipynb_checkpoints
