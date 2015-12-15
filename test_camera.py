@@ -5,8 +5,8 @@ from imusim.platforms.imus import IdealIMU
 from imusim.simulation.base import Simulation
 from imusim.testing.random_data import RandomTrajectory
 
-from rsimusim.camera import *
-from rsimusim.world import *
+from rsimusim_legacy.camera import *
+from rsimusim_legacy.world import *
 
 # Create environment that contains landmarks
 num_landmarks = 50

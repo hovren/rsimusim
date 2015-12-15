@@ -4,8 +4,8 @@ import numpy as np
 from crisp.l3g4200d import post_process_L3G4200D_data
 import crisp
 import crisp.rotations
-from rsimusim.dataset import Dataset
-from rsimusim.world import NvmModel
+from rsimusim_legacy.dataset import Dataset
+from rsimusim_legacy.world import NvmModel
 
 from imusim.maths.quaternions import QuaternionArray, Quaternion
 

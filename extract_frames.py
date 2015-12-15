@@ -144,7 +144,7 @@ if args.mode == 'normal':
 
 elif args.mode == 'smart':
     ANGLE_THRESHOLD = np.deg2rad(5.0)
-    STEP_THRESHOLD = 15
+    STEP_THRESHOLD = 5
     last_R = None
     last_frame = None
     next_frame_num = args.start if args.start else 0

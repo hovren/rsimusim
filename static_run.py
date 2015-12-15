@@ -10,7 +10,7 @@ from imusim.behaviours.imu import BasicIMUBehaviour
 from imusim.trajectories.base import StaticTrajectory
 from imusim.simulation.base import Simulation
 
-from rsimusim.mpu9250 import MPU9250IMU
+from rsimusim_legacy.mpu9250 import MPU9250IMU
 
 
 sim = Simulation()

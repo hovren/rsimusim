@@ -10,7 +10,7 @@ from imusim.trajectories.sampled import SampledPositionTrajectory, SampledRotati
 from imusim.trajectories.splined import SplinedPositionTrajectory, SplinedRotationTrajectory
 from imusim.utilities.time_series import TimeSeries, QuaternionArray, Quaternion
 
-from rsimusim.world import NvmModel
+from rsimusim_legacy.world import NvmModel
 
 filename = 'walk_model.nvm'
 model = NvmModel.from_file(filename)
