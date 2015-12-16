@@ -32,24 +32,24 @@ class DatasetTests(unittest.TestCase):
                 continue
             nt.assert_almost_equal(ds_pos, camera.position, decimal=1)
 
-    def DISABLED_notest_orientation_from_nvm(self):
+    def test_orientation_from_nvm(self):
         nvm = NvmModel.from_file(self.EXAMPLE_NVM)
         camera_fps = 30.0
         ds = Dataset()
         ds.orientation_from_nvm(nvm, camera_fps=camera_fps)
 
-        cameras = [nvm.cameras[i] for i in
-                   np.random.choice(len(nvm.cameras), size=10, replace=False)]
-
-        for camera in cameras:
+        for camera in nvm.cameras:
             camera_time = camera.framenumber / camera_fps
             ds_rot = ds.trajectory.rotation(camera_time)
             if np.all(np.isnan(unpack_quat(ds_rot))):
                 continue
             cam_rot = camera.orientation
-            dq = ds_rot.conjugate * cam_rot
-            v, theta = dq.toAxisAngle()
-            self.assertLessEqual(abs(theta - np.pi), np.deg2rad(10.0))
+            # Normalize sign before comparison
+            # Normalize by largest element to avoid near-zero sign problems
+            i = np.argmax(np.abs(unpack_quat(cam_rot)))
+            ds_rot *= np.sign(unpack_quat(ds_rot)[i])
+            cam_rot *= np.sign(unpack_quat(cam_rot)[i])
+            nt.assert_almost_equal(unpack_quat(ds_rot), unpack_quat(cam_rot), decimal=1)
 
 
     def test_resample_quaternion_array(self):
