@@ -182,9 +182,3 @@ class NvmExampleTests(unittest.TestCase):
                 distance = np.linalg.norm(yhat - measurement)
                 self.assertLessEqual(distance, max_pixel_distance)
 
-
-def notest_bounds():
-    times = [1.0, 2.0, 5.0, 9.0]
-    bounds = rsimusim_legacy.dataset.create_bounds(times)
-    expected_bounds = [0.5, 1.5, 3.5, 7.0, 11.0]
-    nt.assert_almost_equal(bounds, expected_bounds)
