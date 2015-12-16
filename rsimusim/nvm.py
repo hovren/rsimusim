@@ -6,7 +6,7 @@ from collections import namedtuple
 import numpy as np
 from imusim.maths.quaternions import Quaternion, QuaternionArray
 
-NvmCamera = namedtuple('CameraPose', ['id', 'filename', 'orientation', 'position'])
+NvmCamera = namedtuple('CameraPose', ['id', 'filename', 'focal', 'orientation', 'position'])
 NvmPoint = namedtuple('WorldPoint', ['position', 'color', 'visibility', 'measurements'])
 
 
@@ -21,10 +21,10 @@ class NvmModel(object):
         self._camera_ids = set()
         self._camera_map = {}
 
-    def add_camera(self, cam_id, filename, q, p):
+    def add_camera(self, cam_id, filename, focal, q, p):
         if cam_id in self._camera_ids:
             raise NvmError("There was already a camera with id {:d}".format(cam_id))
-        camera = NvmCamera(cam_id, filename, q, p)
+        camera = NvmCamera(cam_id, filename, focal, q, p)
         self.cameras.append(camera)
         self._camera_ids.add(cam_id)
         self._camera_map[cam_id] = camera
@@ -43,7 +43,6 @@ class NvmModel(object):
     @classmethod
     def from_file(cls, filename, load_measurements=False):
         instance = cls()
-        instance.focal = None
         num_cameras = 0
         num_points = 0
         state = 'header'
@@ -72,13 +71,6 @@ class NvmModel(object):
                 except IndexError:
                     raise NvmError("Failed to parse camera on line {:d}".format(i))
                 focal, qw, qx, qy, qz, px, py, pz, radial, _ = params
-                if not instance.focal:
-                    instance.focal = focal
-                else:
-                    if not focal == instance.focal:
-                        raise ValueError("Got new focal {:.3f}, but already had {:.3f}".format(
-                            focal, instance.focal
-                        ))
                 filename = ''.join(tokens[:-10])
                 filename = os.path.split(filename)[-1]
                 q = Quaternion(qw, qx, qy, qz)
@@ -87,7 +79,7 @@ class NvmModel(object):
                 if not np.isclose(qnorm, 1.0):
                     raise ValueError("{} had norm {}".format(q, qnorm))
                 p = np.array([px, py, pz])
-                instance.add_camera(len(instance.cameras), filename, q, p)
+                instance.add_camera(len(instance.cameras), filename, focal, q, p)
 
                 if len(instance.cameras) >= num_cameras:
                     state = 'num_points'
@@ -139,4 +131,14 @@ class NvmModel(object):
 
         # Done, return normalized instance
         #instance._normalize_world()
-        return instance
+        return instance    @staticmethod
+    def project_point_camera(world_point, camera):
+            Xw = world_point.position
+            R = camera.orientation.toMatrix()
+            Xc = np.dot(R, (Xw - camera.position)).reshape(3,1)
+            K = np.array([[camera.focal, 0, 0],
+                         [0, camera.focal, 0],
+                         [0, 0, 1.]])
+            y = np.dot(K, Xc)
+            y /= Xc[2]
+            return y[:2].flatten()

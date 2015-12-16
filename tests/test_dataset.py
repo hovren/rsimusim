@@ -15,6 +15,9 @@ def random_orientation():
     q = np.random.uniform(-1, 1, size=4)
     return Quaternion(*(q / np.linalg.norm(q)))
 
+def random_focal():
+    return np.random.uniform(100., 1000.)
+
 class NvmTests(unittest.TestCase):
     def test_start_empty(self):
         nvm = NvmModel()
@@ -27,7 +30,8 @@ class NvmTests(unittest.TestCase):
         cam_filename = 'somepic.jpg'
         q = Quaternion(1, 0, 0, 0)
         p = np.array([1., 2., 3.])
-        nvm.add_camera(cam_id, cam_filename, q, p)
+        focal = random_focal()
+        nvm.add_camera(cam_id, cam_filename, focal, q, p)
         self.assertEqual(len(nvm.cameras), 1)
 
     def test_add_point(self):
@@ -40,15 +44,15 @@ class NvmTests(unittest.TestCase):
 
     def test_add_same_camera_id(self):
         nvm = NvmModel()
-        nvm.add_camera(0, 'somefile1.jpg', random_orientation(), random_position())
-        nvm.add_camera(1, 'somefile2.jpg', random_orientation(), random_position())
+        nvm.add_camera(0, 'somefile1.jpg', random_focal(), random_orientation(), random_position())
+        nvm.add_camera(1, 'somefile2.jpg', random_focal(), random_orientation(), random_position())
         with self.assertRaises(NvmError):
-            nvm.add_camera(0, 'somefile3.jpg', random_orientation(), random_position())
+            nvm.add_camera(0, 'somefile3.jpg', random_focal(), random_orientation(), random_position())
 
     def test_add_point_camera_id_missing(self):
         nvm = NvmModel()
         camera_id = 0
-        nvm.add_camera(camera_id, 'somefile.jpg', random_orientation(), random_position())
+        nvm.add_camera(camera_id, 'somefile.jpg', random_focal(), random_orientation(), random_position())
         # Cameras with id 12 and 14 does not exist, this is an error
         with self.assertRaises(NvmError):
             nvm.add_point(random_position(), (1, 0, 0), [12, 14])
@@ -56,13 +60,13 @@ class NvmTests(unittest.TestCase):
     def test_camera_by_id(self):
         nvm = NvmModel()
         camera_data = [
-            (i, 'somefile{:04d}.jpg'.format(i), random_orientation(), random_position())
+            (i, 'somefile{:04d}.jpg'.format(i), random_focal(), random_orientation(), random_position())
             for i in range(100)
         ]
         random.shuffle(camera_data)
 
-        for cam_id, filename, q, p in camera_data:
-            nvm.add_camera(cam_id, filename, q, p)
+        for cam_id, filename, focal, q, p in camera_data:
+            nvm.add_camera(cam_id, filename, focal, q, p)
 
         cam50 = nvm.camera_by_id(50)
         self.assertEqual(cam50.id, 50)
@@ -75,6 +79,9 @@ class NvmExampleTests(unittest.TestCase):
     def setUp(self):
         if not self.nvm:
             self.nvm = NvmModel.from_file('example.nvm', load_measurements=True)
+    def test_no_global_focal(self):
+        with self.assertRaises(AttributeError):
+            focal = self.nvm.focal
 
     def test_cameras_loaded(self):
         self.assertEqual(len(self.nvm.cameras), 188)
@@ -83,29 +90,20 @@ class NvmExampleTests(unittest.TestCase):
         camera_ids = [camera.id for camera in self.nvm.cameras]
         self.assertEqual(camera_ids, range(len(camera_ids)))
 
-    def test_focal(self):
-        self.assertEqual(self.nvm.focal, 850.051391602)
+        # Shared focals
+        shared_focal = 850.051391602
+        camera_focals = [camera.focal for camera in self.nvm.cameras]
+        nt.assert_almost_equal(camera_focals, shared_focal)
 
     def test_points_loaded(self):
         self.assertEqual(len(self.nvm.points), 2682)
 
     def test_reprojection(self):
-        def project_point_camera(world_point, camera, focal):
-            Xw = world_point.position
-            R = camera.orientation.toMatrix()
-            Xc = np.dot(R, (Xw - camera.position)).reshape(3,1)
-            K = np.array([[focal, 0, 0],
-                         [0, focal, 0],
-                         [0, 0, 1.]])
-            y = np.dot(K, Xc)
-            y /= Xc[2]
-            return y[:2].flatten()
-
         max_pixel_distance = 7.0
         for p in self.nvm.points[:5]:
             for camera_id, measurement in zip(p.visibility, p.measurements.T):
                 camera = self.nvm.camera_by_id(camera_id)
-                yhat = project_point_camera(p, camera, self.nvm.focal)
+                yhat = NvmModel.project_point_camera(p, camera)
                 distance = np.linalg.norm(yhat - measurement)
                 self.assertLessEqual(distance, max_pixel_distance)
 
