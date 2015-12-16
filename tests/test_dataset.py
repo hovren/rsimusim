@@ -75,10 +75,11 @@ class NvmTests(unittest.TestCase):
 
 class NvmExampleTests(unittest.TestCase):
     nvm = None
+    NVM_FILENAME = 'example.nvm'
 
     def setUp(self):
         if not self.nvm:
-            self.nvm = NvmModel.from_file('example.nvm', load_measurements=True)
+            self.nvm = NvmModel.from_file(self.NVM_FILENAME, load_measurements=True)
     def test_no_global_focal(self):
         with self.assertRaises(AttributeError):
             focal = self.nvm.focal
@@ -99,8 +100,8 @@ class NvmExampleTests(unittest.TestCase):
         self.assertEqual(len(self.nvm.points), 2682)
 
     def test_reprojection(self):
-        max_pixel_distance = 7.0
-        for p in self.nvm.points[:5]:
+        max_pixel_distance = 12.0
+        for p in self.nvm.points:
             for camera_id, measurement in zip(p.visibility, p.measurements.T):
                 camera = self.nvm.camera_by_id(camera_id)
                 yhat = NvmModel.project_point_camera(p, camera)

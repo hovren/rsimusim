@@ -33,7 +33,7 @@ class NvmModel(object):
         for cam_id in visibility:
             if cam_id not in self._camera_ids:
                 raise NvmError("Camera with id {:d} not in camera list".format(cam_id))
-        measurements = measurements if measurements is not None else np.array([])
+        measurements = measurements if measurements is not None else np.empty((2,0))
         self.points.append(NvmPoint(xyz, rgb, visibility, measurements))
 
     def camera_by_id(self, cam_id):
@@ -105,7 +105,7 @@ class NvmModel(object):
                     meas_y = map(float, tokens[10::4])
                     measurements = np.array(zip(meas_x, meas_y)).T
                 else:
-                    measurements = []
+                    measurements = np.empty((2,0))
 
                 instance.add_point(position, color, visibility, measurements)
 
@@ -129,9 +129,9 @@ class NvmModel(object):
             else:
                 raise ValueError("Unknown state {}".format(state))
 
-        # Done, return normalized instance
-        #instance._normalize_world()
-        return instance    @staticmethod
+        return instance
+
+    @staticmethod
     def project_point_camera(world_point, camera):
             Xw = world_point.position
             R = camera.orientation.toMatrix()
