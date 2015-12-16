@@ -1,6 +1,7 @@
 from __future__ import print_function, division
 
 import os
+import re
 from collections import namedtuple
 
 import numpy as np
@@ -8,8 +9,18 @@ from imusim.maths.quaternions import Quaternion, QuaternionArray
 from imusim.utilities.time_series import TimeSeries
 from imusim.trajectories.splined import SplinedPositionTrajectory, SampledPositionTrajectory
 
-NvmCamera = namedtuple('CameraPose', ['id', 'filename', 'focal', 'orientation', 'position'])
 NvmPoint = namedtuple('WorldPoint', ['position', 'color', 'visibility', 'measurements'])
+
+class NvmCamera(namedtuple('CameraPose',
+                           ['id', 'filename', 'focal', 'orientation', 'position'])):
+
+    @property
+    def framenumber(self):
+        m = re.findall(r'(\d+)\.[\w]+\b', self.filename)
+        try:
+            return int(m[-1])
+        except (ValueError, IndexError):
+            raise NvmError("Could not extract frame number from {}".format(self.filename))
 
 
 class NvmError(Exception):
@@ -43,9 +54,7 @@ class NvmModel(object):
 
     @property
     def camera_frame_numbers(self):
-        frames = [int(os.path.splitext(os.path.basename(camera.filename))[0].split("_")[-1])
-         for camera in self.cameras]
-        return frames
+        return [camera.framenumber for camera in self.cameras]
 
     @classmethod
     def from_file(cls, filename, load_measurements=False):

@@ -6,7 +6,7 @@ import numpy as np
 
 from imusim.maths.quaternions import Quaternion, QuaternionArray
 
-from rsimusim.nvm import NvmModel, NvmError
+from rsimusim.nvm import NvmModel, NvmError, NvmCamera
 
 def random_position():
     return np.random.uniform(-10, 10, size=3)
@@ -23,6 +23,21 @@ class NvmTests(unittest.TestCase):
         nvm = NvmModel()
         self.assertEqual(len(nvm.cameras), 0)
         self.assertEqual(len(nvm.points), 0)
+
+    def test_camera_framenumber(self):
+        test_data = [('house_123.jpg,', 123),
+                     ('building_00234.jpeg', 234),
+                     ('crocodile0345.jpg', 345),
+                     ('horse456.png', 456),
+                     ('cat045frame0005.jpg', 5)]
+
+        for i, (filename, framenumber) in enumerate(test_data):
+            camera = NvmCamera(i, filename, random_focal(), random_orientation(), random_position())
+            self.assertEqual(camera.framenumber, framenumber)
+
+        with self.assertRaises(NvmError):
+            camera = NvmCamera(99, 'f23noframes.jpg', random_focal(), random_orientation(), random_position())
+            fn = camera.framenumber
 
     def test_add_camera(self):
         nvm = NvmModel()
