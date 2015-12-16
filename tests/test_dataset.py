@@ -9,7 +9,7 @@ import numpy as np
 from imusim.maths.quaternions import Quaternion, QuaternionArray
 
 from rsimusim.nvm import NvmModel, NvmError
-from rsimusim.dataset import Dataset, resample_quaternion_array
+from rsimusim.dataset import Dataset, DatasetBuilder, DatasetError, resample_quaternion_array
 
 def unpack_quat(q):
     return np.array([q.w, q.x, q.y, q.z])
@@ -51,6 +51,15 @@ class DatasetTests(unittest.TestCase):
             cam_rot *= np.sign(unpack_quat(cam_rot)[i])
             nt.assert_almost_equal(unpack_quat(ds_rot), unpack_quat(cam_rot), decimal=1)
 
+    def test_landmarks_from_nvm(self):
+        nvm = NvmModel.from_file(self.EXAMPLE_NVM)
+        camera_fps = 30.0
+        ds = Dataset()
+        ds.landmarks_from_nvm(nvm)
+
+        self.assertEqual(len(ds.landmarks), len(nvm.points))
+        for ds_p, nvm_p in zip(ds.landmarks, nvm.points):
+            nt.assert_equal(nvm_p.position, ds_p.position)
 
     def test_resample_quaternion_array(self):
         nvm = NvmModel.from_file(self.EXAMPLE_NVM)
@@ -67,6 +76,86 @@ class DatasetTests(unittest.TestCase):
         nt.assert_almost_equal(Q_t[-1], camera_times[-1])
         nt.assert_almost_equal(unpack_quat(Q_resamp[0]), unpack_quat(Q[0]))
         nt.assert_almost_equal(unpack_quat(Q_resamp[-1]), unpack_quat(Q[-1]))
+
+class DatasetBuilderTests(unittest.TestCase):
+    NVM_EXAMPLE = 'example.nvm'
+    GYRO_EXAMPLE = 'example_gyro.npy'
+
+    def test_source_types(self):
+        valid = ('nvm', 'imu')
+        landmark_valid = ('nvm', )
+        invalid = ('gyro', 'acc', 'bacon')
+        db = DatasetBuilder()
+        for s in valid:
+            db.set_orientation_source(s)
+            db.set_position_source(s)
+
+        for s in invalid:
+            with self.assertRaises(DatasetError):
+                db.set_orientation_source(s)
+            with self.assertRaises(DatasetError):
+                db.set_position_source(s)
+            with self.assertRaises(DatasetError):
+                db.set_landmark_source(s)
+
+        for s in landmark_valid:
+            db.set_landmark_source(s)
+
+    def test_missing_source_fail(self):
+        db = DatasetBuilder()
+        nvm = NvmModel.from_file(self.NVM_EXAMPLE)
+        db.add_source_nvm(nvm)
+        with self.assertRaises(DatasetError):
+            db.build()
+        db.set_position_source('nvm')
+        with self.assertRaises(DatasetError):
+            db.build()
+        db.set_orientation_source('nvm')
+        with self.assertRaises(DatasetError):
+            db.build()
+        db.set_landmark_source('nvm')
+        db.build() # all sources selected: OK
+
+    def test_add_nvm_twice_fail(self):
+        db = DatasetBuilder()
+        nvm1 = NvmModel()
+        nvm2 = NvmModel()
+        db.add_source_nvm(nvm1)
+        with self.assertRaises(DatasetError):
+            db.add_source_nvm(nvm2)
+
+    def test_nvm_full(self):
+        db = DatasetBuilder()
+        nvm = NvmModel.from_file(self.NVM_EXAMPLE)
+        camera_fps = 30.0
+        db.add_source_nvm(nvm, camera_fps=camera_fps)
+        db.set_orientation_source('nvm')
+        db.set_position_source('nvm')
+        db.set_landmark_source('nvm')
+        ds = db.build()
+
+        cameras = sorted(nvm.cameras, key=lambda c: c.framenumber)
+        for camera in cameras:
+            t = camera.framenumber / camera_fps
+            ds_pos = ds.trajectory.position(t).flatten()
+            if np.all(np.isnan(ds_pos)):
+                continue
+            nt.assert_almost_equal(ds_pos, camera.position, decimal=2)
+
+            ds_rot = ds.trajectory.rotation(t)
+            cam_rot = camera.orientation
+            i = np.argmax(np.abs(unpack_quat(cam_rot)))
+            ds_rot *= np.sign(unpack_quat(ds_rot)[i])
+            cam_rot *= np.sign(unpack_quat(cam_rot)[i])
+            nt.assert_almost_equal(unpack_quat(ds_rot), unpack_quat(cam_rot), decimal=1)
+
+        # Assume landmark order intact
+        self.assertEqual(len(ds.landmarks), len(nvm.points))
+        for nvm_p, ds_p in zip(nvm.points, ds.landmarks):
+            nt.assert_equal(nvm_p.position, ds_p.position)
+
+
+
 
 def notest_bounds():
     times = [1.0, 2.0, 5.0, 9.0]
