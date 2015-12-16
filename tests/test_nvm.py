@@ -74,12 +74,10 @@ class NvmTests(unittest.TestCase):
 
 
 class NvmExampleTests(unittest.TestCase):
-    nvm = None
     NVM_FILENAME = 'example.nvm'
 
     def setUp(self):
-        if not self.nvm:
-            self.nvm = NvmModel.from_file(self.NVM_FILENAME, load_measurements=True)
+        self.nvm = NvmModel.from_file(self.NVM_FILENAME, load_measurements=True)
 
     def test_no_global_focal(self):
         with self.assertRaises(AttributeError):
