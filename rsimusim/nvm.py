@@ -5,6 +5,8 @@ from collections import namedtuple
 
 import numpy as np
 from imusim.maths.quaternions import Quaternion, QuaternionArray
+from imusim.utilities.time_series import TimeSeries
+from imusim.trajectories.splined import SplinedPositionTrajectory, SampledPositionTrajectory
 
 NvmCamera = namedtuple('CameraPose', ['id', 'filename', 'focal', 'orientation', 'position'])
 NvmPoint = namedtuple('WorldPoint', ['position', 'color', 'visibility', 'measurements'])
@@ -39,6 +41,11 @@ class NvmModel(object):
     def camera_by_id(self, cam_id):
         return self._camera_map[cam_id]
 
+    @property
+    def camera_frame_numbers(self):
+        frames = [int(os.path.splitext(os.path.basename(camera.filename))[0].split("_")[-1])
+         for camera in self.cameras]
+        return frames
 
     @classmethod
     def from_file(cls, filename, load_measurements=False):
@@ -142,3 +149,44 @@ class NvmModel(object):
             y = np.dot(K, Xc)
             y /= Xc[2]
             return y[:2].flatten()
+
+    @classmethod
+    def create_rescaled(cls, nvm, scale_factor):
+        rescaled = NvmModel()
+
+        for camera in nvm.cameras:
+            new_pos = scale_factor * camera.position
+            rescaled.add_camera(camera.id, camera.filename, camera.focal, camera.orientation, new_pos)
+
+        for p in nvm.points:
+            new_pos = scale_factor * p.position
+            rescaled.add_point(new_pos, p.color, p.visibility, p.measurements)
+
+        return rescaled
+
+    @classmethod
+    def create_autoscaled_walk(cls, nvm, walk_speed=1.4, camera_fps=30.0):
+        camera_frames = nvm.camera_frame_numbers
+        timestamps = []
+        positions = []
+        for idx in np.argsort(camera_frames):
+            camera = nvm.cameras[idx]
+            frame_number = camera_frames[idx]
+            timestamps.append(frame_number / camera_fps)
+            positions.append(camera.position)
+
+        timestamps = np.array(timestamps)
+        positions = np.vstack(positions).T
+        timeseries = TimeSeries(timestamps, positions)
+        samp_traj = SampledPositionTrajectory(timeseries)
+        splined_traj = SplinedPositionTrajectory(samp_traj)
+        num_samples = 50 * (splined_traj.endTime - splined_traj.startTime)
+        integration_times = np.linspace(splined_traj.startTime, splined_traj.endTime, num=num_samples)
+        vel = splined_traj.velocity(integration_times)
+        speed = np.linalg.norm(vel, axis=0)
+        travel_time = integration_times[-1] - integration_times[0]
+        dt = float(travel_time) / num_samples
+        distance_traveled = np.trapz(speed, dx=dt)
+        scale_factor = (walk_speed * travel_time) / distance_traveled
+
+        return cls.create_rescaled(nvm, scale_factor)
