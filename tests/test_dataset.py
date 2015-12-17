@@ -10,9 +10,8 @@ from imusim.maths.quaternions import Quaternion, QuaternionArray
 
 from rsimusim.nvm import NvmModel, NvmError
 from rsimusim.dataset import Dataset, DatasetBuilder, DatasetError, resample_quaternion_array
+from tests.helpers import random_orientation, unpack_quat, gyro_data_to_quaternion_array
 
-def unpack_quat(q):
-    return np.array([q.w, q.x, q.y, q.z])
 
 class DatasetTests(unittest.TestCase):
     EXAMPLE_NVM = 'example.nvm'

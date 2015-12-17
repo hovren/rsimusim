@@ -7,16 +7,7 @@ import numpy as np
 from imusim.maths.quaternions import Quaternion, QuaternionArray
 
 from rsimusim.nvm import NvmModel, NvmError, NvmCamera
-
-def random_position():
-    return np.random.uniform(-10, 10, size=3)
-
-def random_orientation():
-    q = np.random.uniform(-1, 1, size=4)
-    return Quaternion(*(q / np.linalg.norm(q)))
-
-def random_focal():
-    return np.random.uniform(100., 1000.)
+from tests.helpers import random_position, random_orientation, random_focal
 
 class NvmTests(unittest.TestCase):
     def test_start_empty(self):
