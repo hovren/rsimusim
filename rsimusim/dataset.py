@@ -90,7 +90,7 @@ class Dataset(object):
         interval_id = i - 1
         return [lm for lm in self.landmarks if interval_id in lm.visibility]
 
-    def save(self, filepath):
+    def save(self, filepath, name):
         if os.path.exists(filepath):
             raise DatasetError('File {} already exists'.format(filepath))
         with h5py.File(filepath, 'w') as h5f:
@@ -102,6 +102,8 @@ class Dataset(object):
                     values = ts.values
                 group['data'] = values
                 group['timestamps'] = ts.timestamps
+
+            h5f.attrs['name'] = name
 
             save_keyframes(self._position_data, 'position')
             save_keyframes(self._orientation_data, 'orientation')

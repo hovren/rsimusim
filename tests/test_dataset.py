@@ -370,18 +370,21 @@ class DatasetSaveTests(unittest.TestCase):
         shutil.rmtree(self.testdir)
 
     def test_save_dont_overwrite(self):
+        dataset_name = 'test_dataset'
         outfilename = os.path.join(self.testdir, 'dataset1.h5')
         with open(outfilename, 'w') as f:
             f.write("Hello\n")
         with self.assertRaises(DatasetError):
-            self.ds.save(outfilename)
+            self.ds.save(outfilename, dataset_name)
 
     def test_save(self):
         outfilename = os.path.join(self.testdir, 'dataset1.h5')
-        self.ds.save(outfilename)
+        dataset_name = 'test_dataset'
+        self.ds.save(outfilename, dataset_name)
         self.assertTrue(os.path.exists(outfilename))
 
         with h5py.File(outfilename, 'r') as h5f:
+            self.assertEqual(h5f.attrs['name'], dataset_name)
             for key in ('position', 'orientation'):
                 self.assertTrue(key in h5f.keys())
                 group = h5f[key]
@@ -404,12 +407,13 @@ class DatasetSaveTests(unittest.TestCase):
         original_visibles = [self.ds.visible_landmarks(_t) for _t in t_vis]
 
         outfilename = os.path.join(self.testdir, 'dataset_save.h5')
+        dataset_name = 'test_dataset'
         ds = self.ds
         for i in range(2):
             if os.path.exists(outfilename):
                 os.unlink(outfilename)
             # Save previous dataset
-            ds.save(outfilename)
+            ds.save(outfilename, dataset_name)
 
             # Load it again, check that it is the same
             ds = Dataset.from_file(outfilename)
