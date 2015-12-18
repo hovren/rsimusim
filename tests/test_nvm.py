@@ -1,10 +1,9 @@
-import unittest
 import random
+import unittest
 
-import numpy.testing as nt
 import numpy as np
-
-from imusim.maths.quaternions import Quaternion, QuaternionArray
+import numpy.testing as nt
+from imusim.maths.quaternions import Quaternion
 
 from rsimusim.nvm import NvmModel, NvmError, NvmCamera
 from tests.helpers import random_position, random_orientation, random_focal

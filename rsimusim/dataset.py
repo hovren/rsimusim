@@ -4,6 +4,7 @@ from collections import namedtuple
 
 import numpy as np
 import crisp.rotations
+import crisp.fastintegrate
 from imusim.maths.quaternions import Quaternion, QuaternionArray
 from imusim.utilities.time_series import TimeSeries
 from imusim.trajectories.splined import \
@@ -73,19 +74,47 @@ class DatasetBuilder(object):
     SOURCES = ('imu', ) + LANDMARK_SOURCES
 
     def __init__(self):
-        self._nvm_source = None
+        self._nvm_model = None
         self._nvm_camera_fps = None
+        self._gyro_data = None
+        self._gyro_times = None
 
         self._orientation_source = None
         self._position_source = None
         self._landmark_source = None
 
+    @property
+    def selected_sources(self):
+        return {
+            'orientation' : self._orientation_source,
+            'position' : self._position_source,
+            'landmark' : self._landmark_source
+        }
+
     def add_source_nvm(self, nvm, camera_fps=30.0):
-        if self._nvm_source is None:
-            self._nvm_source = nvm
+        if self._nvm_model is None:
+            self._nvm_model = nvm
             self._nvm_camera_fps = camera_fps
         else:
             raise DatasetError("Can only add one NVM source")
+
+    def add_source_gyro(self, gyro_data, gyro_times):
+        n, d = gyro_data.shape
+        if not n == len(gyro_times):
+            raise DatasetError("Gyro data and timestamps length did not match")
+        if not d == 3:
+            raise DatasetError("Gyro data must have shape Nx3")
+
+        if self._gyro_data is None:
+            self._gyro_data = gyro_data
+            self._gyro_times = gyro_times
+            dt = float(gyro_times[1] - gyro_times[0])
+            if not np.allclose(np.diff(gyro_times), dt):
+                raise DatasetError("Gyro samples must be uniformly sampled")
+            q = crisp.fastintegrate.integrate_gyro_quaternion_uniform(gyro_data, dt)
+            self._gyro_quat = QuaternionArray(q)
+        else:
+            raise DatasetError("Can not add multiple gyro sources")
 
     def set_orientation_source(self, source):
         if source in self.SOURCES:
@@ -110,15 +139,52 @@ class DatasetBuilder(object):
                 self._orientation_source is not None and \
                 self._position_source is not None
 
+    def _imu_to_nvm_transform(self):
+        def camera_time(camera):
+            return camera.framenumber / self._nvm_camera_fps
+        # Find common time
+        tc_min, tc_max = (camera_time(self._nvm_model.cameras[i]) for i in (0, -1))
+        tg_min, tg_max = (self._gyro_times[i] for i in (0, -1))
+        t_min = max(tc_min, tg_min)
+        t_max = min(tc_max, tg_max)
+        # First valid camera
+        cam_ref = min((camera for camera in self._nvm_model.cameras if camera_time(camera) >= t_min),
+                      key=lambda c: np.abs(camera_time(c) - t_min))
+        t_ref = camera_time(cam_ref)
+
+        # Interpolate gyro orientation at t_ref
+        qn = cam_ref.orientation
+        qg = quaternion_array_interpolate(self._gyro_quat, self._gyro_times, t_ref)
+        Tq = qn * qg.conjugate
+        return Tq, np.array([0,0,0]).reshape(3,1)
+
     def build(self):
         if not self._can_build():
             raise DatasetError("Must select all sources")
         ds = Dataset()
-        ds.orientation_from_nvm(self._nvm_source, camera_fps=self._nvm_camera_fps)
-        ds.position_from_nvm(self._nvm_source, camera_fps=self._nvm_camera_fps)
-        ds.landmarks_from_nvm(self._nvm_source)
+
+        if all(source_value == 'nvm' for source_type, source_value in self.selected_sources.items()):
+            ds.orientation_from_nvm(self._nvm_model, camera_fps=self._nvm_camera_fps)
+            ds.position_from_nvm(self._nvm_model, camera_fps=self._nvm_camera_fps)
+            ds.landmarks_from_nvm(self._nvm_model)
+        else:
+            Tq, Tp = self._imu_to_nvm_transform()
         return ds
 
+def quaternion_slerp(q0, q1, tau):
+    q0_arr = np.array([q0.w, q0.x, q0.y, q0.z])
+    q1_arr = np.array([q1.w, q1.x, q1.y, q1.z])
+    q_arr = crisp.rotations.slerp(q0_arr, q1_arr, tau)
+    return Quaternion(*q_arr)
+
+def quaternion_array_interpolate(qa, qtimes, t):
+    i = np.flatnonzero(qtimes > t)[0]
+    q0 = qa[i-1]
+    q1 = qa[i]
+    t0 = qtimes[i-1]
+    t1 = qtimes[i]
+    tau = (t - t0) / (t1 - t0)
+    return quaternion_slerp(q0, q1, tau)
 
 def resample_quaternion_array(qa, timestamps, resize=None):
     num_samples = resize if resize is not None else len(qa)
