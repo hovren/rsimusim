@@ -21,10 +21,8 @@ def random_orientation():
 def random_focal():
     return np.random.uniform(100., 1000.)
 
-
 def unpack_quat(q):
     return np.array([q.w, q.x, q.y, q.z])
-
 
 def gyro_data_to_quaternion_array(gyro_data, gyro_times):
     dt = float(gyro_times[1] - gyro_times[0])
