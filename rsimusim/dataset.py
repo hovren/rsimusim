@@ -212,12 +212,7 @@ def quaternion_array_interpolate(qa, qtimes, t):
     q1 = qa[i]
     t0 = qtimes[i-1]
     t1 = qtimes[i]
-    if np.isclose(t, t0, atol=1e-3):
-        tau = 0.
-    elif np.isclose(t, t1, atol=1e-3):
-        tau = 1.
-    else:
-        tau = (t - t0) / (t1 - t0)
+    tau = np.clip((t - t0) / (t1 - t0), 0, 1)
 
     return quaternion_slerp(q0, q1, tau)
 

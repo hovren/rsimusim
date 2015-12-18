@@ -370,22 +370,25 @@ def test_quaternion_slerp():
         nt.assert_almost_equal(qintp.magnitude, 1.0)
 
 def test_quaternion_array_interpolate():
-    N = 100
-    qa = QuaternionArray([random_orientation() for _ in range(N)])
-    qtimes = np.random.uniform(-2, 2, size=N)
-    qtimes.sort()
+    for _ in range(100):
+        N = 100
+        qa = QuaternionArray([random_orientation() for _ in range(N)])
+        qtimes = np.random.uniform(-10, 10, size=N)
+        qtimes.sort()
 
-    t_intp = np.random.uniform(qtimes[0], qtimes[-1])
-    q_intp = quaternion_array_interpolate(qa, qtimes, t_intp)
+        t_intp = np.random.uniform(qtimes[0], qtimes[-1])
+        q_intp = quaternion_array_interpolate(qa, qtimes, t_intp)
 
-    i = np.flatnonzero(qtimes > t_intp)[0]
-    q0 = qa[i-1]
-    q1 = qa[i]
-    t0 = qtimes[i-1]
-    t1 = qtimes[i]
-    tau = (t_intp - t0) / (t1 - t0)
-    qslerp = quaternion_slerp(q0, q1, tau)
-    nt.assert_almost_equal(unpack_quat(q_intp), unpack_quat(qslerp))
+        i = np.flatnonzero(qtimes > t_intp)[0]
+        q0 = qa[i-1]
+        q1 = qa[i]
+        t0 = qtimes[i-1]
+        t1 = qtimes[i]
+        tau = np.clip((t_intp - t0) / (t1 - t0), 0, 1)
+        qslerp = quaternion_slerp(q0, q1, tau)
+        if qslerp.dot(q_intp) < 0:
+            qslerp = -qslerp
+        nt.assert_almost_equal(unpack_quat(q_intp), unpack_quat(qslerp))
 
 def notest_bounds():
     times = [1.0, 2.0, 5.0, 9.0]
