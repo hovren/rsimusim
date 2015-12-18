@@ -13,12 +13,17 @@ from rsimusim.dataset import Dataset, DatasetBuilder, DatasetError, \
 from rsimusim.nvm import NvmModel
 from tests.helpers import random_orientation, unpack_quat, gyro_data_to_quaternion_array
 
+NVM_EXAMPLE = 'example.nvm'
+GYRO_EXAMPLE_DATA = np.load('example_gyro_data.npy')
+GYRO_EXAMPLE_TIMES = np.load('example_gyro_times.npy')
+GYRO_DT = float(GYRO_EXAMPLE_TIMES[1] - GYRO_EXAMPLE_TIMES[0])
+GYRO_EXAMPLE_DATA_INT = integrate_gyro_quaternion_uniform(GYRO_EXAMPLE_DATA, GYRO_DT)
+GYRO_EXAMPLE_DATA_Q = QuaternionArray(GYRO_EXAMPLE_DATA_INT)
+assert len(GYRO_EXAMPLE_DATA_Q) == len(GYRO_EXAMPLE_TIMES)
 
 class DatasetTests(unittest.TestCase):
-    EXAMPLE_NVM = 'example.nvm'
-
     def test_position_from_nvm(self):
-        nvm = NvmModel.from_file(self.EXAMPLE_NVM)
+        nvm = NvmModel.from_file(NVM_EXAMPLE)
         ds = Dataset()
         camera_fps = 30.0
         ds.position_from_nvm(nvm, camera_fps=camera_fps)
@@ -33,7 +38,7 @@ class DatasetTests(unittest.TestCase):
             nt.assert_almost_equal(ds_pos, camera.position, decimal=1)
 
     def test_orientation_from_nvm(self):
-        nvm = NvmModel.from_file(self.EXAMPLE_NVM)
+        nvm = NvmModel.from_file(NVM_EXAMPLE)
         camera_fps = 30.0
         ds = Dataset()
         ds.orientation_from_nvm(nvm, camera_fps=camera_fps)
@@ -51,8 +56,64 @@ class DatasetTests(unittest.TestCase):
             cam_rot *= np.sign(unpack_quat(cam_rot)[i])
             nt.assert_almost_equal(unpack_quat(ds_rot), unpack_quat(cam_rot), decimal=1)
 
+    def test_orientation_from_gyro(self):
+        ds = Dataset()
+        ds.orientation_from_gyro(GYRO_EXAMPLE_DATA, GYRO_EXAMPLE_TIMES)
+        t0 = max(GYRO_EXAMPLE_TIMES[0], ds.trajectory.startTime)
+        t1 = min(GYRO_EXAMPLE_TIMES[-1], ds.trajectory.endTime)
+        i0 = np.flatnonzero(GYRO_EXAMPLE_TIMES >= t0)[0]
+        i1 = np.flatnonzero(GYRO_EXAMPLE_TIMES <= t1)[-1]
+        t0 = GYRO_EXAMPLE_TIMES[i0]
+        t1 = GYRO_EXAMPLE_TIMES[i1]
+        gyro_times_valid = GYRO_EXAMPLE_TIMES[i0:i1+1]
+        gyro_data_valid = GYRO_EXAMPLE_DATA[i0:i1+1]
+        rotvel_world = ds.trajectory.rotationalVelocity(gyro_times_valid)
+        rotvel_body = ds.trajectory.rotation(gyro_times_valid).rotateFrame(rotvel_world)
+        """
+        import matplotlib.pyplot as plt
+        for i in range(3):
+            plt.subplot(3,1,1+i)
+            plt.plot(gyro_times_valid, rotvel_body[i], color='g', linewidth=2)
+            plt.plot(gyro_times_valid, gyro_data_valid.T[i], color='k', alpha=0.5)
+        plt.show()
+        """
+        rotvel_err = rotvel_body - gyro_data_valid.T
+        self.assertLess(np.mean(rotvel_err), 0.01)
+
+    def test_orientation_from_gyro_shapes(self):
+        N = 100
+        gyro_times = np.arange(N) / 0.1
+        valid_shapes = [(N, 3), (N, 4)]
+        invalid_shapes = [(3, N), (4, N), (N, 2), (N, 5)]
+
+        for shape in valid_shapes:
+            gyro_data = np.zeros(shape)
+            gyro_data[:, 0] = 1. # To get an OK quaternion
+            ds = Dataset()
+            ds.orientation_from_gyro(gyro_data, gyro_times)
+
+        for shape in invalid_shapes:
+            gyro_data = np.zeros(shape)
+            ds = Dataset()
+            with self.assertRaises(DatasetError):
+                ds.orientation_from_gyro(gyro_data, gyro_times)
+
+    def test_orientation_from_gyro_uniform_only(self):
+        N = 100
+        gyro_data = np.zeros((N, 3))
+        gyro_times_valid = np.arange(N) / 0.1
+        gyro_times_invalid = np.random.uniform(0, 10.0, size=N)
+        gyro_times_invalid.sort()
+
+        ds = Dataset()
+        ds.orientation_from_gyro(gyro_data, gyro_times_valid)
+
+        ds = Dataset()
+        with self.assertRaises(DatasetError):
+            ds.orientation_from_gyro(gyro_data, gyro_times_invalid)
+
     def test_landmarks_from_nvm(self):
-        nvm = NvmModel.from_file(self.EXAMPLE_NVM)
+        nvm = NvmModel.from_file(NVM_EXAMPLE)
         camera_fps = 30.0
         ds = Dataset()
         ds.landmarks_from_nvm(nvm)
@@ -62,7 +123,7 @@ class DatasetTests(unittest.TestCase):
             nt.assert_equal(nvm_p.position, ds_p.position)
 
     def test_resample_quaternion_array(self):
-        nvm = NvmModel.from_file(self.EXAMPLE_NVM)
+        nvm = NvmModel.from_file(NVM_EXAMPLE)
         cameras = sorted(nvm.cameras, key=lambda c: c.framenumber)
         Q = QuaternionArray([c.orientation for c in cameras])
         Q = Q.unflipped()
@@ -78,10 +139,6 @@ class DatasetTests(unittest.TestCase):
         nt.assert_almost_equal(unpack_quat(Q_resamp[-1]), unpack_quat(Q[-1]))
 
 class DatasetBuilderTests(unittest.TestCase):
-    NVM_EXAMPLE = 'example.nvm'
-    GYRO_EXAMPLE_DATA = 'example_gyro_data.npy'
-    GYRO_EXAMPLE_TIMES = 'example_gyro_times.npy'
-
     def test_source_types(self):
         valid = ('nvm', 'imu')
         landmark_valid = ('nvm', )
@@ -104,7 +161,7 @@ class DatasetBuilderTests(unittest.TestCase):
 
     def test_missing_source_fail(self):
         db = DatasetBuilder()
-        nvm = NvmModel.from_file(self.NVM_EXAMPLE)
+        nvm = NvmModel.from_file(NVM_EXAMPLE)
         db.add_source_nvm(nvm)
         with self.assertRaises(DatasetError):
             db.build()
@@ -141,7 +198,7 @@ class DatasetBuilderTests(unittest.TestCase):
 
     def test_nvm_full(self):
         db = DatasetBuilder()
-        nvm = NvmModel.from_file(self.NVM_EXAMPLE)
+        nvm = NvmModel.from_file(NVM_EXAMPLE)
         camera_fps = 30.0
         db.add_source_nvm(nvm, camera_fps=camera_fps)
         db.set_orientation_source('nvm')
@@ -205,29 +262,55 @@ class DatasetBuilderTests(unittest.TestCase):
 
     def test_nvm_gyro(self):
         db = DatasetBuilder()
-        gyro_data = np.load(self.GYRO_EXAMPLE_DATA)
-        gyro_times = np.load(self.GYRO_EXAMPLE_TIMES)
-        db.add_source_gyro(gyro_data, gyro_times)
-        nvm = NvmModel.from_file(self.NVM_EXAMPLE)
-        db.add_source_nvm(nvm)
+        camera_fps = 30.0
+        db.add_source_gyro(GYRO_EXAMPLE_DATA, GYRO_EXAMPLE_TIMES)
+        nvm = NvmModel.from_file(NVM_EXAMPLE)
+        db.add_source_nvm(nvm, camera_fps=camera_fps)
         db.set_landmark_source('nvm')
         db.set_position_source('nvm')
         db.set_orientation_source('imu')
         ds = db.build()
 
-        dt = float(gyro_times[1] - gyro_times[0])
-        q = integrate_gyro_quaternion_uniform(gyro_data, dt)
-        step = max(1, int(len(gyro_times) / 1000))
-        for idx in range(0, len(gyro_times), step):
-            qg = q[idx]
-            t = gyro_times[idx]
+        # 1) Dataset rotational velocity should match gyro (almost)
+        t0 = max(GYRO_EXAMPLE_TIMES[0], ds.trajectory.startTime)
+        t1 = min(GYRO_EXAMPLE_TIMES[-1], ds.trajectory.endTime)
+        i0 = np.flatnonzero(GYRO_EXAMPLE_TIMES >= t0)[0]
+        t0 = GYRO_EXAMPLE_TIMES[i0]
+        i1 = np.flatnonzero(GYRO_EXAMPLE_TIMES <= t1)[-1]
+        t1 = GYRO_EXAMPLE_TIMES[i1]
+        gyro_part_data = GYRO_EXAMPLE_DATA[i0:i1+1]
+        gyro_part_times = GYRO_EXAMPLE_TIMES[i0:i1+1]
+        rotvel_ds_world = ds.trajectory.rotationalVelocity(gyro_part_times)
+        rotvel_ds = ds.trajectory.rotation(gyro_part_times).rotateFrame(rotvel_ds_world)
+        rotvel_err = rotvel_ds - gyro_part_data.T
+        self.assertLess(np.mean(rotvel_err), 0.01)
+
+        # 2) Dataset orientations should match approximately with NVM cameras
+        for camera in nvm.cameras:
+            t = camera.framenumber / camera_fps
             if not ds.trajectory.startTime <= t <= ds.trajectory.endTime:
                 continue
-            qt = ds.trajectory.rotation(t)
-            i = np.argmax(np.abs(qg))
-            qt *= np.sign(unpack_quat(qt)[i])
-            qg *= np.sign(qg[i])
-            nt.assert_almost_equal(unpack_quat(qt), qg)
+            orientation_ds = ds.trajectory.rotation(t)
+            if orientation_ds.dot(camera.orientation) < 0:
+                orientation_ds = -orientation_ds
+            nt.assert_almost_equal(unpack_quat(orientation_ds),
+                                   unpack_quat(camera.orientation),
+                                   decimal=1)
+
+    def test_nvm_aligned_imu_orientations(self):
+        nvm = NvmModel.from_file(NVM_EXAMPLE)
+        db = DatasetBuilder()
+        camera_fps = 30.0
+        db.add_source_nvm(nvm, camera_fps=camera_fps)
+        db.add_source_gyro(GYRO_EXAMPLE_DATA, GYRO_EXAMPLE_TIMES)
+        orientations_aligned, new_times = db._nvm_aligned_imu_orientations()
+        Q_aligned = QuaternionArray(orientations_aligned).unflipped()
+        for camera in nvm.cameras:
+            t = camera.framenumber / camera_fps
+            qt = quaternion_array_interpolate(Q_aligned, new_times, t)
+            if qt.dot(camera.orientation) < 0:
+                qt = -qt
+            nt.assert_almost_equal(unpack_quat(qt), unpack_quat(camera.orientation), decimal=1)
 
     def test_gyro_uniform(self):
         N = 1000
@@ -237,35 +320,6 @@ class DatasetBuilderTests(unittest.TestCase):
         db = DatasetBuilder()
         with self.assertRaises(DatasetError):
             db.add_source_gyro(gyro_data, gyro_times)
-
-    def test_imu_to_nvm_transform(self):
-        nvm = NvmModel.from_file(self.NVM_EXAMPLE)
-        gyro_data = np.load(self.GYRO_EXAMPLE_DATA)
-        gyro_times = np.load(self.GYRO_EXAMPLE_TIMES)
-        camera_fps = 30.0
-        def camera_time(camera):
-            return camera.framenumber / camera_fps
-        db = DatasetBuilder()
-        db.add_source_nvm(nvm)
-        db.add_source_gyro(gyro_data, gyro_times)
-        Tq, Tp = db._imu_to_nvm_transform()
-
-        nt.assert_almost_equal(Tq.magnitude, 1.0)
-
-        gyro_quat = gyro_data_to_quaternion_array(gyro_data, gyro_times)
-        cameras = sorted((camera for camera in nvm.cameras), key=camera_time)
-        tc_min, tc_max = (camera_time(cameras[i]) for i in (0, -1))
-        tg_min, tg_max = (gyro_times[i] for i in (0, -1))
-        t_min = max(tc_min, tg_min)
-        t_max = min(tc_max, tg_max)
-        # First valid camera
-        cam_ref = min((camera for camera in cameras if camera_time(camera) >= t_min),
-                      key=lambda c: np.abs(camera_time(c) - t_min))
-        t_ref = camera_time(cam_ref)
-        # Gyro sample at that time
-        q_ref = quaternion_array_interpolate(gyro_quat, gyro_times, t_ref)
-        q_ref_trfm = Tq * q_ref
-        nt.assert_almost_equal(unpack_quat(q_ref_trfm), unpack_quat(cam_ref.orientation))
 
 def test_crisp_slerp():
     "Check that crisp.rotations.slerp() works as intended"

@@ -53,21 +53,41 @@ class Dataset(object):
         self._orientation_data = ts
         self._update_trajectory()
 
+    def orientation_from_gyro(self, gyro_data, gyro_times):
+        n, d = gyro_data.shape
+
+        if d == 3:
+            dt = float(gyro_times[1] - gyro_times[0])
+            if not np.allclose(np.diff(gyro_times), dt):
+                raise DatasetError("gyro timestamps must be uniformly sampled")
+
+            qdata = crisp.fastintegrate.integrate_gyro_quaternion_uniform(gyro_data, dt)
+            Q = QuaternionArray(qdata)
+        elif d == 4:
+            Q = QuaternionArray(gyro_data)
+        else:
+            raise DatasetError("Gyro data must have shape (N,3) or (N, 4), was {}".format(gyro_data.shape))
+
+        ts = TimeSeries(gyro_times, Q.unflipped())
+        self._orientation_data = ts
+        self._update_trajectory()
+
     def landmarks_from_nvm(self, nvm_model):
         for p in nvm_model.points:
             lm = Landmark(p.position)
             self.landmarks.append(lm)
 
     def _update_trajectory(self):
+        smooth_rotations = False
         if self._position_data and not self._orientation_data:
             samp = SampledPositionTrajectory(self._position_data)
             self.trajectory = SplinedPositionTrajectory(samp)
         elif self._orientation_data and not self._position_data:
             samp = SampledRotationTrajectory(self._orientation_data)
-            self.trajectory = SplinedRotationTrajectory(samp)
+            self.trajectory = SplinedRotationTrajectory(samp, smoothRotations=smooth_rotations)
         elif self._position_data and self._orientation_data:
             samp = SampledTrajectory(self._position_data, self._orientation_data)
-            self.trajectory = SplinedTrajectory(samp)
+            self.trajectory = SplinedTrajectory(samp, smoothRotations=smooth_rotations)
 
 class DatasetBuilder(object):
     LANDMARK_SOURCES = ('nvm', )
@@ -139,36 +159,45 @@ class DatasetBuilder(object):
                 self._orientation_source is not None and \
                 self._position_source is not None
 
-    def _imu_to_nvm_transform(self):
-        def camera_time(camera):
-            return camera.framenumber / self._nvm_camera_fps
-        # Find common time
-        tc_min, tc_max = (camera_time(self._nvm_model.cameras[i]) for i in (0, -1))
-        tg_min, tg_max = (self._gyro_times[i] for i in (0, -1))
-        t_min = max(tc_min, tg_min)
-        t_max = min(tc_max, tg_max)
-        # First valid camera
-        cam_ref = min((camera for camera in self._nvm_model.cameras if camera_time(camera) >= t_min),
-                      key=lambda c: np.abs(camera_time(c) - t_min))
-        t_ref = camera_time(cam_ref)
+    def _nvm_aligned_imu_orientations(self):
+        # Start in first camera
+        cameras = sorted(self._nvm_model.cameras, key=lambda c: c.framenumber)
+        cam_times = np.array([c.framenumber / self._nvm_camera_fps for c in cameras])
+        cam_idx = np.flatnonzero(cam_times >= self._gyro_times[0])[0]
+        cam_ref = cameras[cam_idx]
+        t_ref = cam_times[cam_idx]
 
-        # Interpolate gyro orientation at t_ref
-        qn = cam_ref.orientation
-        qg = quaternion_array_interpolate(self._gyro_quat, self._gyro_times, t_ref)
-        Tq = qn * qg.conjugate
-        return Tq, np.array([0,0,0]).reshape(3,1)
+        # Find nearest sample
+        gstart_idx = np.argmin(np.abs(self._gyro_times - t_ref))
+        cam_q = cam_ref.orientation.conjugate
+        q_initial = np.array([cam_q.w, cam_q.x, cam_q.y, cam_q.z])
+        gyro_part = self._gyro_data[gstart_idx:]
+        gyro_part_times = self._gyro_times[gstart_idx:]
+        dt = float(gyro_part_times[1] - gyro_part_times[0])
+        gyro_part = gyro_part
+        q = crisp.fastintegrate.integrate_gyro_quaternion_uniform(gyro_part, dt, initial=q_initial)
+        # Conjugate to have rotations behave as expected
+        q *= np.array([1, -1, -1, -1]).reshape(1,4)
+        return q, gyro_part_times
 
     def build(self):
         if not self._can_build():
             raise DatasetError("Must select all sources")
         ds = Dataset()
+        ss = self.selected_sources
+        if not ss['landmark'] == 'nvm':
+            raise DatasetError("Only landmarks from NVM is supported")
 
-        if all(source_value == 'nvm' for source_type, source_value in self.selected_sources.items()):
+        ds.landmarks_from_nvm(self._nvm_model)
+
+        if all(source_value == 'nvm' for source_value in ss.values()):
             ds.orientation_from_nvm(self._nvm_model, camera_fps=self._nvm_camera_fps)
             ds.position_from_nvm(self._nvm_model, camera_fps=self._nvm_camera_fps)
-            ds.landmarks_from_nvm(self._nvm_model)
         else:
-            Tq, Tp = self._imu_to_nvm_transform()
+            if ss['orientation'] == 'imu':
+                orientations, timestamps = self._nvm_aligned_imu_orientations()
+                ds.orientation_from_gyro(orientations, timestamps)
+            ds.position_from_nvm(self._nvm_model, camera_fps=self._nvm_camera_fps)
         return ds
 
 def quaternion_slerp(q0, q1, tau):
@@ -183,7 +212,13 @@ def quaternion_array_interpolate(qa, qtimes, t):
     q1 = qa[i]
     t0 = qtimes[i-1]
     t1 = qtimes[i]
-    tau = (t - t0) / (t1 - t0)
+    if np.isclose(t, t0, atol=1e-3):
+        tau = 0.
+    elif np.isclose(t, t1, atol=1e-3):
+        tau = 1.
+    else:
+        tau = (t - t0) / (t1 - t0)
+
     return quaternion_slerp(q0, q1, tau)
 
 def resample_quaternion_array(qa, timestamps, resize=None):
