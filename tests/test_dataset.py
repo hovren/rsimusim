@@ -1,7 +1,10 @@
 from __future__ import print_function, division
-
+import os
+import shutil
+import tempfile
 import unittest
 
+import h5py
 import crisp.rotations
 import numpy as np
 import numpy.testing as nt
@@ -9,7 +12,7 @@ from crisp.fastintegrate import integrate_gyro_quaternion_uniform
 from imusim.maths.quaternions import Quaternion, QuaternionArray
 
 from rsimusim.dataset import Dataset, DatasetBuilder, DatasetError, \
-    resample_quaternion_array, quaternion_slerp, quaternion_array_interpolate
+    resample_quaternion_array, quaternion_slerp, quaternion_array_interpolate, create_bounds
 from rsimusim.nvm import NvmModel
 from tests.helpers import random_orientation, unpack_quat, gyro_data_to_quaternion_array
 
@@ -116,11 +119,40 @@ class DatasetTests(unittest.TestCase):
         nvm = NvmModel.from_file(NVM_EXAMPLE)
         camera_fps = 30.0
         ds = Dataset()
-        ds.landmarks_from_nvm(nvm)
+        ds.landmarks_from_nvm(nvm, camera_fps)
 
         self.assertEqual(len(ds.landmarks), len(nvm.points))
         for ds_p, nvm_p in zip(ds.landmarks, nvm.points):
             nt.assert_equal(nvm_p.position, ds_p.position)
+
+        def find_landmark(p, landmarks):
+            if not landmarks:
+                return None
+
+            best = min(landmarks, key=lambda lm: np.linalg.norm(lm.position - p.position))
+            if np.allclose(best.position, p.position):
+                return best
+            else:
+                return None
+
+        # Select a few points
+        pt_idx = np.random.choice(len(nvm.points), 25, replace=False)
+        for i in pt_idx:
+            p = nvm.points[i]
+            for camera in nvm.cameras:
+                t = camera.framenumber / camera_fps
+                landmarks = ds.visible_landmarks(t)
+                if camera.id in p.visibility:
+                    lm = find_landmark(p, landmarks)
+                    self.assertIsNotNone(lm, "t={:.3f}, vis={}, bounds={}".format(
+                        t, p.visibility, ds._landmark_bounds
+                    ))
+                    nt.assert_almost_equal(lm.position, p.position)
+                else:
+                    lm = find_landmark(p, landmarks)
+                    self.assertIsNone(lm)
+
+
 
     def test_resample_quaternion_array(self):
         nvm = NvmModel.from_file(NVM_EXAMPLE)
@@ -321,6 +353,86 @@ class DatasetBuilderTests(unittest.TestCase):
         with self.assertRaises(DatasetError):
             db.add_source_gyro(gyro_data, gyro_times)
 
+class DatasetSaveTests(unittest.TestCase):
+    def setUp(self):
+        db = DatasetBuilder()
+        db.add_source_gyro(GYRO_EXAMPLE_DATA, GYRO_EXAMPLE_TIMES)
+        nvm = NvmModel.from_file(NVM_EXAMPLE)
+        db.add_source_nvm(nvm, camera_fps=30.)
+        db.set_landmark_source('nvm')
+        db.set_orientation_source('imu')
+        db.set_position_source('nvm')
+        self.ds = db.build()
+
+        self.testdir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.testdir)
+
+    def test_save_dont_overwrite(self):
+        outfilename = os.path.join(self.testdir, 'dataset1.h5')
+        with open(outfilename, 'w') as f:
+            f.write("Hello\n")
+        with self.assertRaises(DatasetError):
+            self.ds.save(outfilename)
+
+    def test_save(self):
+        outfilename = os.path.join(self.testdir, 'dataset1.h5')
+        self.ds.save(outfilename)
+        self.assertTrue(os.path.exists(outfilename))
+
+        with h5py.File(outfilename, 'r') as h5f:
+            for key in ('position', 'orientation'):
+                self.assertTrue(key in h5f.keys())
+                group = h5f[key]
+                for gkey in ('data', 'timestamps'):
+                    self.assertTrue(gkey in group.keys())
+
+            landmarks_group = h5f['landmarks']
+            self.assertTrue('visibility_bounds' in landmarks_group.attrs)
+            for landmark_id in landmarks_group.keys():
+                lm = landmarks_group[landmark_id]
+                self.assertTrue('position' in lm.keys())
+                self.assertTrue('visibility' in lm.keys())
+
+    def test_save_reload_multi(self):
+        t = np.linspace(self.ds.trajectory.startTime, self.ds.trajectory.endTime, num=200)
+        original_positions = self.ds.trajectory.position(t)
+        original_rotations = self.ds.trajectory.rotation(t)
+        original_landmarks = self.ds.landmarks
+        t_vis = np.linspace(t[0], t[-1], 10)
+        original_visibles = [self.ds.visible_landmarks(_t) for _t in t_vis]
+
+        outfilename = os.path.join(self.testdir, 'dataset_save.h5')
+        ds = self.ds
+        for i in range(2):
+            if os.path.exists(outfilename):
+                os.unlink(outfilename)
+            # Save previous dataset
+            ds.save(outfilename)
+
+            # Load it again, check that it is the same
+            ds = Dataset.from_file(outfilename)
+            positions = ds.trajectory.position(t)
+            rotations = ds.trajectory.rotation(t)
+            nt.assert_equal(positions, original_positions)
+            nt.assert_equal(rotations.array, original_rotations.array)
+
+            self.assertEqual(len(ds.landmarks), len(original_landmarks))
+            for old, new in zip(original_landmarks, ds.landmarks):
+                nt.assert_equal(new.position, old.position)
+                self.assertEqual(new.visibility, old.visibility)
+
+            visibles = [ds.visible_landmarks(_t) for _t in t_vis]
+            for old_vis, new_vis in zip(original_visibles, visibles):
+                self.assertEqual(len(new_vis), len(old_vis))
+                for old_lm, new_lm in zip(old_vis, new_vis):
+                    nt.assert_equal(new_lm.position, old_lm.position)
+                    self.assertEqual(new_lm.visibility, old_lm.visibility)
+
+
+
+
 def test_crisp_slerp():
     "Check that crisp.rotations.slerp() works as intended"
     def constrain_angle(phi):
@@ -390,8 +502,9 @@ def test_quaternion_array_interpolate():
             qslerp = -qslerp
         nt.assert_almost_equal(unpack_quat(q_intp), unpack_quat(qslerp))
 
-def notest_bounds():
+def test_bounds():
     times = [1.0, 2.0, 5.0, 9.0]
-    bounds = rsimusim_legacy.dataset.create_bounds(times)
-    expected_bounds = [0.5, 1.5, 3.5, 7.0, 11.0]
+    bounds = create_bounds(times)
+    #expected_bounds = [0.5, 1.5, 3.5, 7.0, 11.0]
+    expected_bounds = [-float('inf'), 1.5, 3.5, 7.0, float('inf')]
     nt.assert_almost_equal(bounds, expected_bounds)

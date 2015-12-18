@@ -1,7 +1,10 @@
 from __future__ import print_function, division
 
+import os
 from collections import namedtuple
+import bisect
 
+import h5py
 import numpy as np
 import crisp.rotations
 import crisp.fastintegrate
@@ -16,7 +19,7 @@ from imusim.trajectories.splined import \
 class DatasetError(Exception):
     pass
 
-Landmark = namedtuple('Landmark', ['position'])
+Landmark = namedtuple('Landmark', ['position', 'visibility'])
 
 class Dataset(object):
     def __init__(self):
@@ -24,6 +27,7 @@ class Dataset(object):
         self._orientation_data = None
         self.trajectory = None
         self.landmarks = []
+        self._landmark_bounds = None
 
     def position_from_nvm(self, nvm_model, frame_to_time_func=None, camera_fps=None):
         if (bool(nvm_model is None) == bool(frame_to_time_func is None)):
@@ -72,10 +76,70 @@ class Dataset(object):
         self._orientation_data = ts
         self._update_trajectory()
 
-    def landmarks_from_nvm(self, nvm_model):
+    def landmarks_from_nvm(self, nvm_model, camera_fps):
+        camera_times = [c.framenumber / camera_fps for c in nvm_model.cameras]
+        remap = {old : new for new, old in enumerate(np.argsort(camera_times))}
+        self._landmark_bounds = create_bounds(np.array(sorted(camera_times)))
         for p in nvm_model.points:
-            lm = Landmark(p.position)
+            vis = set([remap[v] for v in p.visibility])
+            lm = Landmark(p.position, vis)
             self.landmarks.append(lm)
+
+    def visible_landmarks(self, t):
+        i = bisect.bisect_left(self._landmark_bounds, t)
+        interval_id = i - 1
+        return [lm for lm in self.landmarks if interval_id in lm.visibility]
+
+    def save(self, filepath):
+        if os.path.exists(filepath):
+            raise DatasetError('File {} already exists'.format(filepath))
+        with h5py.File(filepath, 'w') as h5f:
+            def save_keyframes(ts, groupkey):
+                group = h5f.create_group(groupkey)
+                if isinstance(ts.values, QuaternionArray):
+                    values = ts.values.array
+                else:
+                    values = ts.values
+                group['data'] = values
+                group['timestamps'] = ts.timestamps
+
+            save_keyframes(self._position_data, 'position')
+            save_keyframes(self._orientation_data, 'orientation')
+
+            landmarks_group = h5f.create_group('landmarks')
+            landmarks_group.attrs['visibility_bounds'] = self._landmark_bounds
+            num_digits = int(np.ceil(np.log10(len(self.landmarks) + 0.5))) # 0.5 to avoid boundary conditions
+            for i, landmark in enumerate(self.landmarks):
+                group = landmarks_group.create_group('{:0{pad}d}'.format(i, pad=num_digits))
+                group['position'] = landmark.position
+                group['visibility'] = np.array(list(landmark.visibility)).astype('uint64')
+
+    @classmethod
+    def from_file(cls, filepath):
+        instance = cls()
+
+        def load_timeseries(group):
+            timestamps = group['timestamps'].value
+            data = group['data'].value
+            if data.shape[1] == 4:
+                data = QuaternionArray(data)
+            return TimeSeries(timestamps, data)
+
+        with h5py.File(filepath, 'r') as h5f:
+            instance._position_data = load_timeseries(h5f['position'])
+            instance._orientation_data = load_timeseries(h5f['orientation'])
+            instance._update_trajectory()
+
+            landmarks_group = h5f['landmarks']
+            instance._landmark_bounds = landmarks_group.attrs['visibility_bounds']
+            for lm_id in landmarks_group:
+                lm_group = landmarks_group[lm_id]
+                p = lm_group['position'].value
+                visibility = set(list(lm_group['visibility']))
+                lm = Landmark(p, visibility)
+                instance.landmarks.append(lm)
+
+        return instance
 
     def _update_trajectory(self):
         smooth_rotations = False
@@ -188,7 +252,7 @@ class DatasetBuilder(object):
         if not ss['landmark'] == 'nvm':
             raise DatasetError("Only landmarks from NVM is supported")
 
-        ds.landmarks_from_nvm(self._nvm_model)
+        ds.landmarks_from_nvm(self._nvm_model, self._nvm_camera_fps)
 
         if all(source_value == 'nvm' for source_value in ss.values()):
             ds.orientation_from_nvm(self._nvm_model, camera_fps=self._nvm_camera_fps)
@@ -235,3 +299,13 @@ def resample_quaternion_array(qa, timestamps, resize=None):
             q = Quaternion(qc[0], qc[1], qc[2], qc[3])
             new_q.append(q)
     return QuaternionArray(new_q), timestamps_new
+
+def create_bounds(times):
+    bounds = [-float('inf')] #[times[0] - 0.5*(times[1] - times[0])]
+    for i in range(1, len(times)):
+        ta = times[i-1]
+        tb = times[i]
+        bounds.append(0.5 * (ta + tb))
+    #bounds.append(times[-1] + 0.5*(times[-1] - times[-2]))
+    bounds.append(float('inf'))
+    return bounds
