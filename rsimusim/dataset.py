@@ -116,6 +116,33 @@ class Dataset(object):
                 group['position'] = landmark.position
                 group['visibility'] = np.array(list(landmark.visibility)).astype('uint64')
 
+    def visualize(self):
+        from mayavi import mlab
+        t_min = self.trajectory.startTime
+        t_max = self.trajectory.endTime
+        t_samples = (t_max - t_min) * 50
+        t = np.linspace(t_min, t_max, t_samples)
+        positions = self.trajectory.position(t)
+        landmark_data = np.vstack([lm.position for lm in self.landmarks]).T
+        orientation_times = np.linspace(t_min, t_max, num=50)
+        orientations = self.trajectory.rotation(orientation_times)
+
+        # World to camera transform is
+        # Xc = RXw - Rt where R is the camera orientation and position respectively
+        # Camera to world is thus
+        # Xw = RtXc + t
+        zc = np.array([0, 0, 1.]).reshape(3,1)
+        zw = [np.dot(np.array(q.toMatrix()).T, zc).reshape(3,1) for q in orientations]
+        quiver_pos = self.trajectory.position(orientation_times)
+        quiver_data = 0.5 * np.hstack(zw)
+
+        mlab.points3d(landmark_data[0], landmark_data[1], landmark_data[2], scale_factor=0.1)
+        plot_obj = mlab.plot3d(positions[0], positions[1], positions[2], color=(1, 0, 0), line_width=5.0, tube_radius=None)
+        mlab.quiver3d(quiver_pos[0], quiver_pos[1], quiver_pos[2],
+                      quiver_data[0], quiver_data[1], quiver_data[2], color=(1, 1, 0))
+        mlab.axes(plot_obj)
+        mlab.show()
+
     @classmethod
     def from_file(cls, filepath):
         instance = cls()
