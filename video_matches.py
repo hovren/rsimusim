@@ -92,8 +92,11 @@ class VideoTracker(object):
         self.stored_tracks = []
         self.frames = FrameStore(back_track)
 
-    def run(self, max_frame=None, start=0):
+    def run(self, max_frame=None, start=0, visualize=False):
         final_framenum = None
+        if visualize:
+            cv2.namedWindow("tracks", cv2.WINDOW_AUTOSIZE)
+
         for framenum, frame in enumerate(self.stream):
             final_framenum = framenum
             if framenum < start:
@@ -110,6 +113,29 @@ class VideoTracker(object):
             # Fill out with more tracks if necessary
             if len(self.active_tracks) < self.min_tracks:
                 self.more_tracks(framenum, frame)
+
+            if visualize:
+                draw = np.dstack((frame, frame, frame))
+                for t in self.active_tracks:
+                    cv2.circle(draw, tuple(t[framenum]), 10, (255, 0, 0))
+                for t in self.stored_tracks:
+                    try:
+                        cv2.circle(draw, tuple(t[framenum]), 10, (0, 255, 255))
+                    except IndexError:
+                        pass
+                label = 'Frame: {:d} - Active: {:d}, Stored: {:d}'.format(framenum,
+                                                                          len(self.active_tracks),
+                                                                          len(self.stored_tracks))
+                font_size = 2
+                thickness = 3
+                (tw, th), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_COMPLEX, font_size, thickness)
+                rows, cols = frame.shape
+                textpos = cols - tw - 10, th + 10
+                cv2.putText(draw, label, textpos, cv2.FONT_HERSHEY_COMPLEX, font_size, (0, 0, 255), thickness=thickness)
+                cv2.imshow("tracks", draw)
+                if cv2.waitKey(1) == 27:
+                    print('User break')
+                    break
 
             if max_frame is not None and framenum > max_frame:
                 break
@@ -204,6 +230,8 @@ class VideoTracker(object):
                             success_tracks.append(track)
                         else: # Keep tracking
                             to_keep.append(i)
+                    elif status == 1:
+                        logging.debug("Dropping track %d with distance %.1f", track.id, distance)
 
                 alive_tracks = [alive_tracks[i] for i in to_keep]
                 prev_pts = prev_pts[to_keep]
@@ -243,7 +271,8 @@ if __name__ == "__main__":
     camera_model = AtanCameraModel.from_hdf(CAMERA_PATH)
     video = VideoStream.from_file(camera_model, VIDEO_PATH)
     tracker = VideoTracker(video)
-    tracker.run(start=100, max_frame=120)
+    #tracker.run(start=100, max_frame=120, visualize=True)
+    tracker.run(visualize=True)
     print('Stored tracks: {:d}, still active: {:d}'.format(len(tracker.stored_tracks), len(tracker.active_tracks)))
     import shutil
     #for t in tracker.stored_tracks:
