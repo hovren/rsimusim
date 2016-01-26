@@ -5,6 +5,7 @@ from collections import deque
 import os
 import struct
 import logging
+import itertools
 import crisp.tracking
 logging.basicConfig(level=logging.DEBUG)
 
@@ -24,6 +25,9 @@ class Track(object):
 
     def __len__(self):
         return len(self.positions)
+
+    def __contains__(self, framenum):
+        return self.start <= framenum < self.start + len(self)
 
     def __getitem__(self, framenum):
         offset = framenum - self.start
@@ -47,7 +51,7 @@ class Track(object):
     def last_position(self):
         return self.positions[-1]
 
-    def add_measurement(self, frame, position):
+    def add_measurement(self, frame, position, color=None):
         if self.start is None:
             self.start = frame
         elif not frame == self.start + len(self):
@@ -264,6 +268,76 @@ class VideoTracker(object):
         logging.info('Frame %d: Back tracked %d of %d points, stored %d, %d still active',
             framenum, len(success_tracks), len(candidates), new_stored_count, len(self.active_tracks))
 
+    def save_visualsfm(self, output_directory, fake_frames=False):
+        min_frame = min(t.first_framenum for t in self.stored_tracks)
+        max_frame = max(t.last_framenum for t in self.stored_tracks)
+        frame_numbers = range(min_frame, max_frame + 1)
+
+        descriptor_to_track = {} # frame -> (track id -> descriptor id)
+        def chars_to_int(s):
+            assert len(s) == 4
+            res = 0
+            for i, c in enumerate(s):
+                res += ord(c) << (8 * i)
+            return res
+
+        name = chars_to_int('SIFT') #ord('S') + (ord('I') << 8) + (ord('F') << 16) + (ord('T') << 24)
+        version = chars_to_int('V4.0') #ord('V') + ord('4') << 8 + ord('.') << 16 + ord('0') << 24
+        eof = struct.pack('i', chars_to_int(chr(0xff) + 'EOF'))
+        zeropad = int(np.log10(max_frame) + 0.5) + 1
+
+        for framenum in frame_numbers:
+            local_tracks = [t for t in self.stored_tracks if framenum in t]
+            id_map = {}
+            frame_fileroot = os.path.join(output_directory, 'frame_{n:0{zeropad}d}'.format(n=framenum, zeropad=zeropad))
+            sift_filename = frame_fileroot + '.sift'
+            frame_filename = frame_fileroot + '.jpg'
+            if fake_frames:
+                cv2.imwrite(frame_filename, np.zeros((128, 128), dtype='uint8'))
+                logging.debug('Wrote fake frame %s', frame_filename)
+
+            npoint = len(local_tracks)
+            with open(sift_filename, 'wb') as f:
+                header = struct.pack('5i', name, version, npoint, 5, 128)
+                f.write(header)
+                # Location Data
+                for local_id, track in enumerate(local_tracks):
+                    x, y = track[framenum].astype('float32')
+                    location = struct.pack('5f', x, y, 0., 0., 0.) # color, scale, orientation not set
+                    f.write(location)
+                    id_map[track.id] = local_id
+                # Descriptor Data
+                fake_descriptor = struct.pack('128B', *([0]*128))
+                for _ in range(npoint):
+                    f.write(fake_descriptor)
+                # EOF
+                f.write(eof)
+            logging.info('Wrote %s with %d descriptors', sift_filename, npoint)
+            descriptor_to_track[framenum] = id_map
+
+        # Match file
+        match_filename = os.path.join(output_directory, 'matches.txt')
+        frame_pairs = itertools.combinations(frame_numbers, 2)
+        with open(match_filename, 'w') as f:
+            for frame_1, frame_2 in frame_pairs:
+                tracks_1 = set(descriptor_to_track[frame_1].keys())
+                tracks_2 = set(descriptor_to_track[frame_2].keys())
+                mutual = tracks_1.intersection(tracks_2)
+                if mutual:
+                    logging.debug('Writing %d matches for pair %d, %d', len(mutual), frame_1, frame_2)
+                    f.write('frame_{f1:0{zeropad}d}.jpg frame_{f2:0{zeropad}d}.jpg {nmatch:d}\n'.format(
+                        f1=frame_1, f2=frame_2, zeropad=zeropad, nmatch=len(mutual)
+                    ))
+                    f1_descs = ' '.join([str(descriptor_to_track[frame_1][track_id]) for track_id in mutual])
+                    f2_descs = ' '.join([str(descriptor_to_track[frame_2][track_id]) for track_id in mutual])
+                    f.write(f1_descs)
+                    f.write('\n')
+                    f.write(f2_descs)
+                    f.write('\n')
+        logging.info('Wrote %s', match_filename)
+
+
+
 if __name__ == "__main__":
     VIDEO_PATH = '/home/hannes/Datasets/gopro-gyro-dataset/rccar.MP4'
     CAMERA_PATH = '/home/hannes/Code/crisp/hero3_atan.hdf'
@@ -271,8 +345,9 @@ if __name__ == "__main__":
     camera_model = AtanCameraModel.from_hdf(CAMERA_PATH)
     video = VideoStream.from_file(camera_model, VIDEO_PATH)
     tracker = VideoTracker(video)
-    #tracker.run(start=100, max_frame=120, visualize=True)
-    tracker.run(visualize=True)
+    tracker.run(start=100, max_frame=120, visualize=False)
+    tracker.save_visualsfm('/tmp/output', fake_frames=True)
+    #tracker.run(visualize=True)
     print('Stored tracks: {:d}, still active: {:d}'.format(len(tracker.stored_tracks), len(tracker.active_tracks)))
     import shutil
     #for t in tracker.stored_tracks:

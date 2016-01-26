@@ -51,6 +51,14 @@ class TrackTests(unittest.TestCase):
         t.add_measurement(13, x)
         self.assertEqual(t.first_framenum, 12)
 
+    def test_in(self):
+        t = Track()
+        x = np.array([13., 13.])
+        t.add_measurement(12, np.array([12., 12.]))
+        t.add_measurement(13, x)
+        self.assertTrue(12 in t)
+        self.assertTrue(13 in t)
+        self.assertFalse(14 in t)
 
     def test_id(self):
         t1 = Track()
