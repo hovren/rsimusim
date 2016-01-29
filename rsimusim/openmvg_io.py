@@ -3,6 +3,8 @@ from collections import namedtuple
 import re
 
 import numpy as np
+import cv2
+import os
 from imusim.utilities.time_series import TimeSeries
 from imusim.trajectories.splined import SplinedPositionTrajectory, SampledPositionTrajectory
 
@@ -16,7 +18,16 @@ class View(namedtuple('View', ['id', 'filename', 'intrinsic', 'R', 'c'])):
         except (ValueError, IndexError):
             raise ValueError("Could not extract frame number from {}".format(self.filename))
 
-Structure = namedtuple('Structure', ['point', 'observations'])
+
+class Structure(object):
+    __slots__ = ('point', 'observations', 'color')
+
+    def __init__(self, point, observations, color=None):
+        self.point = point
+        self.observations = observations
+        self.color = color
+
+
 class Intrinsic(namedtuple('Intrinsic',
                            ['id', 'focal_length', 'principal_point', 'width', 'height'])):
     @property
@@ -34,13 +45,43 @@ class SfMData(object):
         self.structure = []
 
     @classmethod
-    def from_json(cls, sfm_data_path):
+    def from_json(cls, sfm_data_path, color=False):
         data = json.load(open(sfm_data_path, 'r'))
         instance = cls()
         instance.intrinsics = instance._unpack_intrinsics(data)
         instance.views = instance._unpack_views(data)
         instance.structure = instance._unpack_structure(data)
+
+        if color:
+            image_path = os.path.join(os.path.split(sfm_data_path)[0],
+                                      data['root_path'])
+            SfMData.colorize(instance, image_path)
+
         return instance
+
+    @classmethod
+    def colorize(cls, instance, root_path):
+        image_structure_map = {}
+        for s_id, s in enumerate(instance.structure):
+            view_id, image_point = s.observations.items()[0]
+            view = instance.views[view_id]
+            if view.filename in image_structure_map:
+                image_structure_map[view.filename].append((s_id, image_point))
+            else:
+                image_structure_map[view.filename] = [(s_id, image_point), ]
+
+        #img = np.zeros((1080, 1920, 3))
+        for filename, structures in image_structure_map.iteritems():
+            filepath = os.path.join(root_path, filename)
+            img = cv2.imread(filepath)
+            assert img.ndim == 3
+            for s_id, image_point in structures:
+                x, y = map(int, image_point)
+                b, g, r = img[y, x]
+                s = instance.structure[s_id]
+                s.color = np.array([r, g, b], dtype='uint8')
+                #img = None
+
 
     def project_point_view(self, p, view):
         intr = view.intrinsic
@@ -101,7 +142,7 @@ class SfMData(object):
             sdata = d['value']
             point = np.array(sdata['X'])
             observations = {view_id : pt for view_id, pt in (parse_observation(od) for od in sdata['observations'])}
-            structure = Structure(point, observations)
+            structure = Structure(point, observations, None)
             return structure
 
         return [parse_structure(d) for d in structure_data]
@@ -124,7 +165,7 @@ class SfMData(object):
         for s in original.structure:
             scaled_pt = scale_factor * s.point
             scaled_obs = {view_id : measurement for view_id, measurement in s.observations.items()}
-            scaled_s = Structure(scaled_pt, scaled_obs)
+            scaled_s = Structure(scaled_pt, scaled_obs, s.color)
             rescaled.structure.append(scaled_s)
 
         return rescaled

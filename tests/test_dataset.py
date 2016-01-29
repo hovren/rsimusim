@@ -140,7 +140,8 @@ class DatasetTests(unittest.TestCase):
 
         self.assertEqual(len(ds.landmarks), len(nvm.points))
         for ds_p, nvm_p in zip(ds.landmarks, nvm.points):
-            nt.assert_equal(nvm_p.position, ds_p.position)
+            nt.assert_equal(ds_p.position, nvm_p.position)
+            nt.assert_equal(ds_p.color, nvm_p.color)
 
         # Select a few points
         pt_idx = np.random.choice(len(nvm.points), 25, replace=False)
@@ -160,13 +161,14 @@ class DatasetTests(unittest.TestCase):
                     self.assertIsNone(lm)
 
     def test_landmarks_from_openmvg(self):
-        sfm_data = SfMData.from_json(OPENMVG_EXAMPLE)
+        sfm_data = SfMData.from_json(OPENMVG_EXAMPLE, color=False)
         ds = Dataset()
         camera_fps = 30.0
         ds.landmarks_from_openmvg(sfm_data, camera_fps)
         self.assertEqual(len(ds.landmarks), len(sfm_data.structure))
         for ds_p, mvg_p in zip(ds.landmarks, sfm_data.structure):
             nt.assert_equal(ds_p.position, mvg_p.point)
+            self.assertIsNone(ds_p.color) # No colors loaded
 
         # Select a few points
         pt_idx = np.random.choice(len(sfm_data.structure), 200, replace=False)
@@ -526,6 +528,7 @@ class DatasetSaveTests(unittest.TestCase):
             self.assertEqual(len(ds.landmarks), len(original_landmarks))
             for old, new in zip(original_landmarks, ds.landmarks):
                 nt.assert_equal(new.position, old.position)
+                nt.assert_equal(new.color, old.color)
                 self.assertEqual(new.visibility, old.visibility)
 
             visibles = [ds.visible_landmarks(_t) for _t in t_vis]

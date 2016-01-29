@@ -19,7 +19,14 @@ from imusim.trajectories.splined import \
 class DatasetError(Exception):
     pass
 
-Landmark = namedtuple('Landmark', ['position', 'visibility'])
+class Landmark(object):
+    __slots__ = ('position', 'color', 'visibility')
+
+    def __init__(self, position, visibility, color=None):
+        self.position = position
+        self.visibility = visibility
+        self.color = color
+
 
 class Dataset(object):
     def __init__(self):
@@ -108,7 +115,7 @@ class Dataset(object):
         self._landmark_bounds = create_bounds(np.array(sorted(camera_times)))
         for p in nvm_model.points:
             vis = set([remap[v] for v in p.visibility])
-            lm = Landmark(p.position, vis)
+            lm = Landmark(p.position, vis, color=p.color)
             self.landmarks.append(lm)
 
     def landmarks_from_openmvg(self, sfm_data, camera_fps):
@@ -117,7 +124,7 @@ class Dataset(object):
         self._landmark_bounds = create_bounds(np.array(sorted(view_times)))
         for s in sfm_data.structure:
             visibility = set([remap[v] for v in s.observations.keys()])
-            lm = Landmark(s.point, visibility)
+            lm = Landmark(s.point, visibility, color=s.color)
             self.landmarks.append(lm)
 
     def visible_landmarks(self, t):
@@ -150,8 +157,9 @@ class Dataset(object):
                 group = landmarks_group.create_group('{:0{pad}d}'.format(i, pad=num_digits))
                 group['position'] = landmark.position
                 group['visibility'] = np.array(list(landmark.visibility)).astype('uint64')
+                group['color'] = landmark.color
 
-    def visualize(self):
+    def visualize(self, camera_orientations=False):
         from mayavi import mlab
         t_min = self.trajectory.startTime
         t_max = self.trajectory.endTime
@@ -159,6 +167,14 @@ class Dataset(object):
         t = np.linspace(t_min, t_max, t_samples)
         positions = self.trajectory.position(t)
         landmark_data = np.vstack([lm.position for lm in self.landmarks]).T
+        landmark_scalars = np.arange(len(self.landmarks))
+        def landmark_color(lm, default_color=np.array([255, 255, 255, 255], dtype='uint8')):
+            if lm.color is None:
+                return default_color
+            else:
+                r, g, b = lm.color
+                return np.array([r, g, b, 255], dtype='uint8')
+        landmark_colors = np.vstack([landmark_color(lm) for lm in self.landmarks])
         orientation_times = np.linspace(t_min, t_max, num=50)
         orientations = self.trajectory.rotation(orientation_times)
 
@@ -171,11 +187,16 @@ class Dataset(object):
         quiver_pos = self.trajectory.position(orientation_times)
         quiver_data = 0.5 * np.hstack(zw)
 
-        mlab.points3d(landmark_data[0], landmark_data[1], landmark_data[2], scale_factor=0.1)
+        pts = mlab.points3d(landmark_data[0], landmark_data[1], landmark_data[2],
+                            landmark_scalars, scale_factor=0.1, scale_mode='none')
+        pts.glyph.color_mode = 'color_by_scalar'
+        pts.module_manager.scalar_lut_manager.lut.table = landmark_colors
+
         plot_obj = mlab.plot3d(positions[0], positions[1], positions[2], color=(1, 0, 0), line_width=5.0, tube_radius=None)
-        mlab.quiver3d(quiver_pos[0], quiver_pos[1], quiver_pos[2],
-                      quiver_data[0], quiver_data[1], quiver_data[2], color=(1, 1, 0))
         mlab.axes(plot_obj)
+        if camera_orientations:
+            mlab.quiver3d(quiver_pos[0], quiver_pos[1], quiver_pos[2],
+                          quiver_data[0], quiver_data[1], quiver_data[2], color=(1, 1, 0))
         mlab.show()
 
     @classmethod
@@ -199,8 +220,9 @@ class Dataset(object):
             for lm_id in landmarks_group:
                 lm_group = landmarks_group[lm_id]
                 p = lm_group['position'].value
+                color = lm_group['color'].value
                 visibility = set(list(lm_group['visibility']))
-                lm = Landmark(p, visibility)
+                lm = Landmark(p, visibility, color=color)
                 instance.landmarks.append(lm)
 
         return instance
