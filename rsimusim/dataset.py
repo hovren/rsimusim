@@ -20,12 +20,21 @@ class DatasetError(Exception):
     pass
 
 class Landmark(object):
-    __slots__ = ('position', 'color', 'visibility')
+    __slots__ = ('position', '_color', 'visibility')
 
     def __init__(self, position, visibility, color=None):
         self.position = position
         self.visibility = visibility
-        self.color = color
+        self._color = color
+
+    @property
+    def color(self):
+        if self._color is None:
+            return 255 * np.ones((4,), dtype='uint8')
+        else:
+            r, g, b = self._color[:3]
+            a = 255 if self._color.size == 3 else self._color[-1]
+            return np.array([r, g, b, a], dtype='uint8')
 
 
 class Dataset(object):
@@ -151,13 +160,18 @@ class Dataset(object):
             save_keyframes(self._orientation_data, 'orientation')
 
             landmarks_group = h5f.create_group('landmarks')
-            landmarks_group.attrs['visibility_bounds'] = self._landmark_bounds
+            landmarks_group['visibility_bounds'] = self._landmark_bounds
             num_digits = int(np.ceil(np.log10(len(self.landmarks) + 0.5))) # 0.5 to avoid boundary conditions
+            positions = np.empty((len(self.landmarks), 3))
+            colors = np.empty_like(positions, dtype='uint8')
+            visibility_group = landmarks_group.create_group('visibility')
             for i, landmark in enumerate(self.landmarks):
-                group = landmarks_group.create_group('{:0{pad}d}'.format(i, pad=num_digits))
-                group['position'] = landmark.position
-                group['visibility'] = np.array(list(landmark.visibility)).astype('uint64')
-                group['color'] = landmark.color
+                vgroup_key = '{:0{pad}d}'.format(i, pad=num_digits)
+                visibility_group[vgroup_key] = np.array(list(landmark.visibility)).astype('uint64')
+                positions[i] = landmark.position
+                colors[i] = landmark.color[:3] # Skip alpha
+            landmarks_group['positions'] = positions
+            landmarks_group['colors'] = colors
 
     def visualize(self, camera_orientations=False):
         from mayavi import mlab
@@ -168,13 +182,8 @@ class Dataset(object):
         positions = self.trajectory.position(t)
         landmark_data = np.vstack([lm.position for lm in self.landmarks]).T
         landmark_scalars = np.arange(len(self.landmarks))
-        def landmark_color(lm, default_color=np.array([255, 255, 255, 255], dtype='uint8')):
-            if lm.color is None:
-                return default_color
-            else:
-                r, g, b = lm.color
-                return np.array([r, g, b, 255], dtype='uint8')
-        landmark_colors = np.vstack([landmark_color(lm) for lm in self.landmarks])
+
+        landmark_colors = np.vstack([lm.color for lm in self.landmarks])
         orientation_times = np.linspace(t_min, t_max, num=50)
         orientations = self.trajectory.rotation(orientation_times)
 
@@ -216,12 +225,16 @@ class Dataset(object):
             instance._update_trajectory()
 
             landmarks_group = h5f['landmarks']
-            instance._landmark_bounds = landmarks_group.attrs['visibility_bounds']
-            for lm_id in landmarks_group:
-                lm_group = landmarks_group[lm_id]
-                p = lm_group['position'].value
-                color = lm_group['color'].value
-                visibility = set(list(lm_group['visibility']))
+            instance._landmark_bounds = landmarks_group['visibility_bounds'].value
+            positions = landmarks_group['positions'].value
+            colors = landmarks_group['colors'].value
+            landmark_keys = landmarks_group['visibility'].keys()
+            landmark_keys.sort(key=lambda key: int(key))
+            for lm_key in landmark_keys:
+                lm_id = int(lm_key)
+                p = positions[lm_id]
+                color = colors[lm_id]
+                visibility = set(list(landmarks_group['visibility'][lm_key].value))
                 lm = Landmark(p, visibility, color=color)
                 instance.landmarks.append(lm)
 

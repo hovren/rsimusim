@@ -495,11 +495,11 @@ class DatasetSaveTests(unittest.TestCase):
                     self.assertTrue(gkey in group.keys())
 
             landmarks_group = h5f['landmarks']
-            self.assertTrue('visibility_bounds' in landmarks_group.attrs)
-            for landmark_id in landmarks_group.keys():
-                lm = landmarks_group[landmark_id]
-                self.assertTrue('position' in lm.keys())
-                self.assertTrue('visibility' in lm.keys())
+            self.assertTrue('visibility_bounds' in landmarks_group)
+            self.assertEqual(len(landmarks_group['visibility'].keys()), len(self.ds.landmarks))
+            self.assertTrue('positions' in landmarks_group.keys())
+            self.assertTrue('colors' in landmarks_group.keys())
+            self.assertTrue('visibility' in landmarks_group.keys())
 
     def test_save_reload_multi(self):
         t = np.linspace(self.ds.trajectory.startTime, self.ds.trajectory.endTime, num=200)
