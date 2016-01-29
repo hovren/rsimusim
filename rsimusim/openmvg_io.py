@@ -3,6 +3,8 @@ from collections import namedtuple
 import re
 
 import numpy as np
+from imusim.utilities.time_series import TimeSeries
+from imusim.trajectories.splined import SplinedPositionTrajectory, SampledPositionTrajectory
 
 
 class View(namedtuple('View', ['id', 'filename', 'intrinsic', 'R', 'c'])):
@@ -26,11 +28,19 @@ class Intrinsic(namedtuple('Intrinsic',
                          [0., 0., 1.]])
 
 class SfMData(object):
-    def __init__(self, sfm_data_path):
+    def __init__(self):
+        self.intrinsics = []
+        self.views = []
+        self.structure = []
+
+    @classmethod
+    def from_json(cls, sfm_data_path):
         data = json.load(open(sfm_data_path, 'r'))
-        self.intrinsics = self._unpack_intrinsics(data)
-        self.views = self._unpack_views(data)
-        self.structure = self._unpack_structure(data)
+        instance = cls()
+        instance.intrinsics = instance._unpack_intrinsics(data)
+        instance.views = instance._unpack_views(data)
+        instance.structure = instance._unpack_structure(data)
+        return instance
 
     def project_point_view(self, p, view):
         intr = view.intrinsic
@@ -95,3 +105,47 @@ class SfMData(object):
             return structure
 
         return [parse_structure(d) for d in structure_data]
+
+    @classmethod
+    def create_rescaled(cls, original, scale_factor):
+        rescaled = cls()
+
+        for intr in original.intrinsics:
+            new_intr = Intrinsic(*intr)
+            rescaled.intrinsics.append(new_intr)
+
+        for v in original.views:
+            scaled_c = scale_factor * v.c
+            scaled_intr = rescaled.intrinsics[v.intrinsic.id]
+            assert scaled_intr.id == v.intrinsic.id
+            scaled_v = View(v.id, v.filename, scaled_intr, v.R, scaled_c)
+            rescaled.views.append(scaled_v)
+
+        for s in original.structure:
+            scaled_pt = scale_factor * s.point
+            scaled_obs = {view_id : measurement for view_id, measurement in s.observations.items()}
+            scaled_s = Structure(scaled_pt, scaled_obs)
+            rescaled.structure.append(scaled_s)
+
+        return rescaled
+
+    @classmethod
+    def create_autoscaled_walk(cls, sfm_data, walk_speed=1.4, camera_fps=30.0):
+        views = sorted(sfm_data.views, key=lambda v: v.framenumber)
+        view_times = np.array([v.framenumber / camera_fps for v in views])
+        view_pos = np.vstack([v.c for v in views]).T
+
+        timeseries = TimeSeries(view_times, view_pos)
+        samp_traj = SampledPositionTrajectory(timeseries)
+        splined_traj = SplinedPositionTrajectory(samp_traj)
+        num_samples = 50 * (splined_traj.endTime - splined_traj.startTime)
+        integration_times = np.linspace(splined_traj.startTime, splined_traj.endTime, num=num_samples)
+        vel = splined_traj.velocity(integration_times)
+        speed = np.linalg.norm(vel, axis=0)
+        travel_time = integration_times[-1] - integration_times[0]
+        dt = float(travel_time) / num_samples
+        distance_traveled = np.trapz(speed, dx=dt)
+        scale_factor = (walk_speed * travel_time) / distance_traveled
+
+        return cls.create_rescaled(sfm_data, scale_factor)
+

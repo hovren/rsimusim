@@ -68,6 +68,21 @@ class Dataset(object):
         self._orientation_data = ts
         self._update_trajectory()
 
+    def orientation_from_openmvg(self, sfm_data, frame_to_time_func=None, camera_fps=None):
+        if (bool(camera_fps is None) == bool(frame_to_time_func is None)):
+            raise DatasetError("Must specify frame_to_time_func OR camera_fps, not both or none of them")
+        frame_time = frame_to_time_func if frame_to_time_func else lambda n: float(n) / camera_fps
+        views = sorted(sfm_data.views, key=lambda v: v.framenumber)
+        view_times = np.array([frame_time(v.framenumber) for v in views])
+        view_orientations = QuaternionArray([Quaternion.fromMatrix(v.R.T) for v in views])
+        view_orientations = view_orientations.unflipped()
+
+        # Must resample to uniform sample time for splining to work
+        view_orientations, view_times = resample_quaternion_array(view_orientations, view_times)
+        ts = TimeSeries(view_times, view_orientations)
+        self._orientation_data = ts
+        self._update_trajectory()
+
     def orientation_from_gyro(self, gyro_data, gyro_times):
         n, d = gyro_data.shape
 
@@ -203,12 +218,14 @@ class Dataset(object):
             self.trajectory = SplinedTrajectory(samp, smoothRotations=smooth_rotations)
 
 class DatasetBuilder(object):
-    LANDMARK_SOURCES = ('nvm', )
+    LANDMARK_SOURCES = ('nvm', 'openmvg')
     SOURCES = ('imu', ) + LANDMARK_SOURCES
 
     def __init__(self):
         self._nvm_model = None
         self._nvm_camera_fps = None
+        self._openmvg_data = None
+        self._openmvg_camera_fps = None
         self._gyro_data = None
         self._gyro_times = None
 
@@ -230,6 +247,13 @@ class DatasetBuilder(object):
             self._nvm_camera_fps = camera_fps
         else:
             raise DatasetError("Can only add one NVM source")
+
+    def add_source_openmvg(self, sfm_data, camera_fps=30.0):
+        if self._openmvg_data is None:
+            self._openmvg_data = sfm_data
+            self._openmvg_camera_fps = camera_fps
+        else:
+            raise DatasetError("Can only add one OpenMVG source")
 
     def add_source_gyro(self, gyro_data, gyro_times):
         n, d = gyro_data.shape
@@ -281,9 +305,21 @@ class DatasetBuilder(object):
         t_ref = cam_times[cam_idx]
 
         # Find nearest sample
+        return self._sfm_aligned_imu_orientations(cam_ref.orientation.conjugate, t_ref)
+
+    def _openmvg_aligned_imu_orientations(self):
+        # Start in first view
+        views = sorted(self._openmvg_data.views, key=lambda v: v.framenumber)
+        view_times = np.array([v.framenumber / self._openmvg_camera_fps for v in views])
+        view_idx = np.flatnonzero(view_times >= self._gyro_times[0])[0]
+        view_ref = views[view_idx]
+        t_ref = view_times[view_idx]
+        q_ref = Quaternion.fromMatrix(view_ref.R.T)
+        return self._sfm_aligned_imu_orientations(q_ref, t_ref)
+
+    def _sfm_aligned_imu_orientations(self, sfm_q, t_ref):
         gstart_idx = np.argmin(np.abs(self._gyro_times - t_ref))
-        cam_q = cam_ref.orientation.conjugate
-        q_initial = np.array([cam_q.w, cam_q.x, cam_q.y, cam_q.z])
+        q_initial = np.array([sfm_q.w, sfm_q.x, sfm_q.y, sfm_q.z])
         gyro_part = self._gyro_data[gstart_idx:]
         gyro_part_times = self._gyro_times[gstart_idx:]
         dt = float(gyro_part_times[1] - gyro_part_times[0])
@@ -293,24 +329,43 @@ class DatasetBuilder(object):
         q *= np.array([1, -1, -1, -1]).reshape(1,4)
         return q, gyro_part_times
 
+
     def build(self):
         if not self._can_build():
             raise DatasetError("Must select all sources")
         ds = Dataset()
         ss = self.selected_sources
-        if not ss['landmark'] == 'nvm':
-            raise DatasetError("Only landmarks from NVM is supported")
 
-        ds.landmarks_from_nvm(self._nvm_model, self._nvm_camera_fps)
-
-        if all(source_value == 'nvm' for source_value in ss.values()):
-            ds.orientation_from_nvm(self._nvm_model, camera_fps=self._nvm_camera_fps)
-            ds.position_from_nvm(self._nvm_model, camera_fps=self._nvm_camera_fps)
+        if ss['landmark'] == 'nvm':
+            ds.landmarks_from_nvm(self._nvm_model, self._nvm_camera_fps)
+        elif ss['landmark'] == 'openmvg':
+            ds.landmarks_from_openmvg(self._openmvg_data, self._openmvg_camera_fps)
         else:
-            if ss['orientation'] == 'imu':
+            raise DatasetError("'{}' source can not be used for landmarks!".format(ss['landmark']))
+
+        if ss['orientation'] == 'imu':
+            if ss['landmark'] == 'nvm':
                 orientations, timestamps = self._nvm_aligned_imu_orientations()
                 ds.orientation_from_gyro(orientations, timestamps)
+            elif ss['landmark'] == 'openmvg':
+                orientations, timestamps = self._openmvg_aligned_imu_orientations()
+                ds.orientation_from_gyro(orientations, timestamps)
+            else:
+                ds.orientation_from_gyro(self._gyro_data, self._gyro_times)
+        elif ss['orientation'] == 'nvm':
+            ds.orientation_from_nvm(self._nvm_model, camera_fps=self._nvm_camera_fps)
+        elif ss['orientation'] == 'openmvg':
+            ds.orientation_from_openmvg(self._openmvg_data, camera_fps=self._openmvg_camera_fps)
+        else:
+            raise DatasetError("'{}' source can not be used for orientations!".format(ss['orientation']))
+
+        if ss['position'] == 'nvm':
             ds.position_from_nvm(self._nvm_model, camera_fps=self._nvm_camera_fps)
+        elif ss['position'] == 'openmvg':
+            ds.position_from_openmvg(self._openmvg_data, camera_fps=self._openmvg_camera_fps)
+        else:
+            raise DatasetError("'{}' source can not be used for position!".format(ss['position']))
+
         return ds
 
 def quaternion_slerp(q0, q1, tau):

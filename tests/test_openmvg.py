@@ -28,9 +28,12 @@ STRUCTURE_800 = {
 }
 
 class OpenMVGSfMDataTests(unittest.TestCase):
-    def test_load_example(self):
+    def setUp(self):
         example_file = 'example_sfm_data.json'
-        sfm_data = SfMData(example_file)
+        self.sfm_data = SfMData.from_json(example_file)
+
+    def test_load_example(self):
+        sfm_data = self.sfm_data
 
         # Intrinsics
         self.assertEqual(len(sfm_data.intrinsics), 1)
@@ -64,8 +67,8 @@ class OpenMVGSfMDataTests(unittest.TestCase):
             nt.assert_equal(pt, expected_pt)
 
     def test_reprojection(self):
-        example_file = 'example_sfm_data.json'
-        sfm_data = SfMData(example_file)
+        sfm_data = self.sfm_data
+
         tolerance = 7.0 # max reprojection error
         for s in sfm_data.structure:
             for view_id, image_point in s.observations.items():
@@ -74,3 +77,48 @@ class OpenMVGSfMDataTests(unittest.TestCase):
                 p = sfm_data.project_point_view(s.point, v)
                 error = np.linalg.norm(p - image_point)
                 self.assertLessEqual(error, tolerance)
+
+    def test_rescale(self):
+        sfm_data = self.sfm_data
+        low_sf = np.random.uniform(0.1, 0.8)
+        high_sf = np.random.uniform(1.5, 10.)
+        for scale_factor in (low_sf, high_sf):
+            rescaled = SfMData.create_rescaled(sfm_data, scale_factor)
+            self.assertEqual(len(rescaled.views), len(sfm_data.views))
+            self.assertEqual(len(rescaled.structure), len(sfm_data.structure))
+            self.assertEqual(len(rescaled.intrinsics), len(sfm_data.intrinsics))
+
+            for i_original, i_rescaled in zip(sfm_data.intrinsics, rescaled.intrinsics):
+                self.assertEqual(i_rescaled.width, i_original.width)
+                self.assertEqual(i_rescaled.height, i_original.height)
+                nt.assert_equal(i_rescaled.camera_matrix, i_original.camera_matrix)
+
+            for view_original, view_scaled in zip(sfm_data.views, rescaled.views):
+                self.assertEqual(view_scaled.id, view_original.id)
+                self.assertEqual(view_scaled.filename, view_original.filename)
+                nt.assert_equal(view_scaled.R, view_original.R)
+                nt.assert_almost_equal(view_scaled.c, scale_factor * view_original.c)
+
+            for s_original, s_scaled in zip(sfm_data.structure, rescaled.structure):
+                self.assertEqual(len(s_scaled.observations), len(s_original.observations))
+                self.assertEqual(sorted(s_scaled.observations.keys()),
+                                 sorted(s_original.observations.keys()))
+                for view_id in s_scaled.observations.keys():
+                    p_original = s_original.observations[view_id]
+                    p_scaled = s_scaled.observations[view_id]
+                    nt.assert_equal(p_scaled, p_original)
+
+                nt.assert_almost_equal(s_scaled.point, scale_factor * s_original.point)
+
+            max_pixel_distance = 12.0
+            for s in rescaled.structure:
+                for view_id, measurement in s.observations.items():
+                    view = rescaled.views[view_id]
+                    assert view.id == view.id
+                    yhat = rescaled.project_point_view(s.point, view)
+                    distance = np.linalg.norm(yhat - measurement)
+                    self.assertLessEqual(distance, max_pixel_distance)
+
+    def test_rescale_walk(self):
+        rescaled = SfMData.create_autoscaled_walk(self.sfm_data)
+        self.assertIsNotNone(rescaled)
