@@ -14,9 +14,11 @@ from imusim.maths.quaternions import Quaternion, QuaternionArray
 from rsimusim.dataset import Dataset, DatasetBuilder, DatasetError, \
     resample_quaternion_array, quaternion_slerp, quaternion_array_interpolate, create_bounds
 from rsimusim.nvm import NvmModel
-from tests.helpers import random_orientation, unpack_quat, gyro_data_to_quaternion_array
+from rsimusim.openmvg_io import SfMData
+from tests.helpers import random_orientation, unpack_quat, gyro_data_to_quaternion_array, find_landmark
 
 NVM_EXAMPLE = 'example.nvm'
+OPENMVG_EXAMPLE = 'example_sfm_data.json'
 GYRO_EXAMPLE_DATA = np.load('example_gyro_data.npy')
 GYRO_EXAMPLE_TIMES = np.load('example_gyro_times.npy')
 GYRO_DT = float(GYRO_EXAMPLE_TIMES[1] - GYRO_EXAMPLE_TIMES[0])
@@ -39,6 +41,21 @@ class DatasetTests(unittest.TestCase):
             if np.all(np.isnan(ds_pos)):
                 continue
             nt.assert_almost_equal(ds_pos, camera.position, decimal=1)
+
+    def test_position_from_openmvg(self):
+        sfm_data = SfMData(OPENMVG_EXAMPLE)
+        ds = Dataset()
+        camera_fps = 30.0
+        ds.position_from_openmvg(sfm_data, camera_fps=camera_fps)
+
+        views = [sfm_data.views[i] for i in
+                   np.random.choice(len(sfm_data.views), size=10, replace=False)]
+        for view in views:
+            view_time = view.framenumber / camera_fps
+            ds_pos = ds.trajectory.position(view_time).flatten()
+            if np.all(np.isnan(ds_pos)):
+                continue
+            nt.assert_almost_equal(ds_pos, view.c, decimal=1)
 
     def test_orientation_from_nvm(self):
         nvm = NvmModel.from_file(NVM_EXAMPLE)
@@ -125,16 +142,6 @@ class DatasetTests(unittest.TestCase):
         for ds_p, nvm_p in zip(ds.landmarks, nvm.points):
             nt.assert_equal(nvm_p.position, ds_p.position)
 
-        def find_landmark(p, landmarks):
-            if not landmarks:
-                return None
-
-            best = min(landmarks, key=lambda lm: np.linalg.norm(lm.position - p.position))
-            if np.allclose(best.position, p.position):
-                return best
-            else:
-                return None
-
         # Select a few points
         pt_idx = np.random.choice(len(nvm.points), 25, replace=False)
         for i in pt_idx:
@@ -143,14 +150,41 @@ class DatasetTests(unittest.TestCase):
                 t = camera.framenumber / camera_fps
                 landmarks = ds.visible_landmarks(t)
                 if camera.id in p.visibility:
-                    lm = find_landmark(p, landmarks)
+                    lm = find_landmark(p.position, landmarks)
                     self.assertIsNotNone(lm, "t={:.3f}, vis={}, bounds={}".format(
                         t, p.visibility, ds._landmark_bounds
                     ))
                     nt.assert_almost_equal(lm.position, p.position)
                 else:
-                    lm = find_landmark(p, landmarks)
+                    lm = find_landmark(p.position, landmarks)
                     self.assertIsNone(lm)
+
+    def test_landmarks_from_openmvg(self):
+        sfm_data = SfMData(OPENMVG_EXAMPLE)
+        ds = Dataset()
+        camera_fps = 30.0
+        ds.landmarks_from_openmvg(sfm_data, camera_fps)
+        self.assertEqual(len(ds.landmarks), len(sfm_data.structure))
+        for ds_p, mvg_p in zip(ds.landmarks, sfm_data.structure):
+            nt.assert_equal(ds_p.position, mvg_p.point)
+
+        # Select a few points
+        pt_idx = np.random.choice(len(sfm_data.structure), 200, replace=False)
+        for i in pt_idx:
+            s = sfm_data.structure[i]
+            for view in sfm_data.views:
+                t = view.framenumber / camera_fps
+                landmarks = ds.visible_landmarks(t)
+                if view.id in s.observations:
+                    lm = find_landmark(s.point, landmarks)
+                    self.assertIsNotNone(lm, "t={:.3f}, vis={}, bounds={}".format(
+                        t, s.observations.keys(), ds._landmark_bounds
+                    ))
+                    nt.assert_almost_equal(lm.position, s.point)
+                else:
+                    lm = find_landmark(s.point, landmarks)
+                    self.assertIsNone(lm)
+
 
 
 

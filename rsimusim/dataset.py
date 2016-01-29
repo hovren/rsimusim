@@ -30,7 +30,7 @@ class Dataset(object):
         self._landmark_bounds = None
 
     def position_from_nvm(self, nvm_model, frame_to_time_func=None, camera_fps=None):
-        if (bool(nvm_model is None) == bool(frame_to_time_func is None)):
+        if (bool(camera_fps is None) == bool(frame_to_time_func is None)):
             raise DatasetError("Must specify frame_to_time_func OR camera_fps, not both or none of them")
         frame_time = frame_to_time_func if frame_to_time_func else lambda n: float(n) / camera_fps
 
@@ -42,8 +42,19 @@ class Dataset(object):
 
         self._update_trajectory()
 
+    def position_from_openmvg(self, sfm_data, frame_to_time_func=None, camera_fps=None):
+        if (bool(camera_fps is None) == bool(frame_to_time_func is None)):
+            raise DatasetError("Must specify frame_to_time_func OR camera_fps, not both or none of them")
+        frame_time = frame_to_time_func if frame_to_time_func else lambda n: float(n) / camera_fps
+        views = sorted(sfm_data.views, key=lambda v: v.framenumber)
+        view_times = np.array([frame_time(v.framenumber) for v in views])
+        view_pos = np.vstack([v.c for v in views]).T
+        ts = TimeSeries(view_times, view_pos)
+        self._position_data = ts
+        self._update_trajectory()
+
     def orientation_from_nvm(self, nvm_model, frame_to_time_func=None, camera_fps=None):
-        if (bool(nvm_model is None) == bool(frame_to_time_func is None)):
+        if (bool(camera_fps is None) == bool(frame_to_time_func is None)):
             raise DatasetError("Must specify frame_to_time_func OR camera_fps, not both or none of them")
         frame_time = frame_to_time_func if frame_to_time_func else lambda n: float(n) / camera_fps
         cameras = sorted(nvm_model.cameras, key=lambda c: c.framenumber)
@@ -83,6 +94,15 @@ class Dataset(object):
         for p in nvm_model.points:
             vis = set([remap[v] for v in p.visibility])
             lm = Landmark(p.position, vis)
+            self.landmarks.append(lm)
+
+    def landmarks_from_openmvg(self, sfm_data, camera_fps):
+        view_times = [v.framenumber / camera_fps for v in sfm_data.views]
+        remap = {old : new for new, old in enumerate(np.argsort(view_times))}
+        self._landmark_bounds = create_bounds(np.array(sorted(view_times)))
+        for s in sfm_data.structure:
+            visibility = set([remap[v] for v in s.observations.keys()])
+            lm = Landmark(s.point, visibility)
             self.landmarks.append(lm)
 
     def visible_landmarks(self, t):

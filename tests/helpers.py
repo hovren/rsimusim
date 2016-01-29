@@ -29,3 +29,17 @@ def gyro_data_to_quaternion_array(gyro_data, gyro_times):
     nt.assert_almost_equal(np.diff(gyro_times), dt)
     q = integrate_gyro_quaternion_uniform(gyro_data, dt)
     return QuaternionArray(q)
+
+
+def find_landmark(p, landmarks):
+    if not landmarks:
+        return None
+
+    lm = next((lm for lm in landmarks if np.all(lm.position == p)), None)
+    return lm
+
+#    best = min(landmarks, key=lambda lm: np.linalg.norm(lm.position - p))
+#    if np.allclose(best.position, p):
+#        return best
+#    else:
+#        return None
