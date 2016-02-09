@@ -65,6 +65,7 @@ class SfMData(object):
         for s_id, s in enumerate(instance.structure):
             view_id, image_point = s.observations.items()[0]
             view = instance.views[view_id]
+            assert view.id == view_id
             if view.filename in image_structure_map:
                 image_structure_map[view.filename].append((s_id, image_point))
             else:
@@ -73,11 +74,14 @@ class SfMData(object):
         #img = np.zeros((1080, 1920, 3))
         for filename, structures in image_structure_map.iteritems():
             filepath = os.path.join(root_path, filename)
-            img = cv2.imread(filepath)
+            img = cv2.imread(filepath, cv2.IMREAD_COLOR)
             assert img.ndim == 3
+            img_median = cv2.medianBlur(img, 7)
+            assert img_median.shape == img.shape
             for s_id, image_point in structures:
                 x, y = map(int, image_point)
-                b, g, r = img[y, x]
+
+                b, g, r = img_median[y, x]
                 s = instance.structure[s_id]
                 s.color = np.array([r, g, b], dtype='uint8')
                 #img = None

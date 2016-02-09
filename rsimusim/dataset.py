@@ -173,7 +173,7 @@ class Dataset(object):
             landmarks_group['positions'] = positions
             landmarks_group['colors'] = colors
 
-    def visualize(self, camera_orientations=False):
+    def visualize(self, draw_orientations=False, draw_axes=False):
         from mayavi import mlab
         t_min = self.trajectory.startTime
         t_max = self.trajectory.endTime
@@ -197,13 +197,14 @@ class Dataset(object):
         quiver_data = 0.5 * np.hstack(zw)
 
         pts = mlab.points3d(landmark_data[0], landmark_data[1], landmark_data[2],
-                            landmark_scalars, scale_factor=0.1, scale_mode='none')
+                            landmark_scalars, scale_factor=0.2, scale_mode='none')
         pts.glyph.color_mode = 'color_by_scalar'
         pts.module_manager.scalar_lut_manager.lut.table = landmark_colors
 
         plot_obj = mlab.plot3d(positions[0], positions[1], positions[2], color=(1, 0, 0), line_width=5.0, tube_radius=None)
-        mlab.axes(plot_obj)
-        if camera_orientations:
+        if draw_axes:
+            mlab.axes(plot_obj)
+        if draw_orientations:
             mlab.quiver3d(quiver_pos[0], quiver_pos[1], quiver_pos[2],
                           quiver_data[0], quiver_data[1], quiver_data[2], color=(1, 1, 0))
         mlab.show()
