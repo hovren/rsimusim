@@ -13,7 +13,7 @@ from imusim.maths.quaternions import Quaternion, QuaternionArray
 
 from rsimusim.dataset import Dataset, DatasetBuilder, DatasetError, \
     resample_quaternion_array, quaternion_slerp, quaternion_array_interpolate, create_bounds
-from rsimusim.nvm import NvmModel
+from rsimusim.nvm import NvmModel, NvmLoader
 from rsimusim.openmvg_io import SfMData
 from tests.helpers import random_orientation, unpack_quat, gyro_data_to_quaternion_array, find_landmark
 
@@ -25,6 +25,7 @@ GYRO_DT = float(GYRO_EXAMPLE_TIMES[1] - GYRO_EXAMPLE_TIMES[0])
 GYRO_EXAMPLE_DATA_INT = integrate_gyro_quaternion_uniform(GYRO_EXAMPLE_DATA, GYRO_DT)
 GYRO_EXAMPLE_DATA_Q = QuaternionArray(GYRO_EXAMPLE_DATA_INT)
 assert len(GYRO_EXAMPLE_DATA_Q) == len(GYRO_EXAMPLE_TIMES)
+CAMERA_FPS = 30.
 
 class DatasetTests(unittest.TestCase):
     def test_position_from_nvm(self):
@@ -187,9 +188,6 @@ class DatasetTests(unittest.TestCase):
                     lm = find_landmark(s.point, landmarks)
                     self.assertIsNone(lm)
 
-
-
-
     def test_resample_quaternion_array(self):
         nvm = NvmModel.from_file(NVM_EXAMPLE)
         cameras = sorted(nvm.cameras, key=lambda c: c.framenumber)
@@ -205,6 +203,20 @@ class DatasetTests(unittest.TestCase):
         nt.assert_almost_equal(Q_t[-1], camera_times[-1])
         nt.assert_almost_equal(unpack_quat(Q_resamp[0]), unpack_quat(Q[0]))
         nt.assert_almost_equal(unpack_quat(Q_resamp[-1]), unpack_quat(Q[-1]))
+
+
+class AbstractDatasetSfmTestMixin(object):
+    def load_dataset(self):
+        self.ds = Dataset()
+        self.ds.landmarks_from_sfm(self.sfm)
+
+    def test_landmarks_loaded(self):
+        self.assertEqual(len(self.ds.landmarks), len(self.sfm.landmarks))
+
+class DatasetFromNvmTests(AbstractDatasetSfmTestMixin, unittest.TestCase):
+    def setUp(self):
+        self.sfm = NvmLoader.from_file(NVM_EXAMPLE, CAMERA_FPS)
+        self.load_dataset()
 
 class DatasetBuilderTests(unittest.TestCase):
     def test_source_types(self):

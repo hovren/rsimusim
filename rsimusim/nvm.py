@@ -8,6 +8,7 @@ import numpy as np
 from imusim.maths.quaternions import Quaternion, QuaternionArray
 from imusim.utilities.time_series import TimeSeries
 from imusim.trajectories.splined import SplinedPositionTrajectory, SampledPositionTrajectory
+from rsimusim.sfm import SfmResult
 
 NvmPoint = namedtuple('WorldPoint', ['position', 'color', 'visibility', 'measurements'])
 
@@ -199,3 +200,105 @@ class NvmModel(object):
         scale_factor = (walk_speed * travel_time) / distance_traveled
 
         return cls.create_rescaled(nvm, scale_factor)
+
+
+class NvmLoader(SfmResult):
+    @property
+    def camera_frame_numbers(self):
+        return [camera.framenumber for camera in self.cameras]
+
+    @classmethod
+    def from_file(cls, filename, camera_fps, load_measurements=True):
+        instance = cls()
+        num_cameras = 0
+        num_points = 0
+        state = 'header'
+        for i, line in enumerate(open(filename, 'r')):
+            line = line.strip()
+            if not line or line[0] == '#':
+                continue
+
+            if state == 'header':
+                if line == 'NVM_V3':
+                    state = 'num_cameras'
+                else:
+                    raise NvmError("Expected NVM_V3, got {}".format(line))
+
+            elif state == 'num_cameras':
+                try:
+                    num_cameras = int(line)
+                    state = 'cameras'
+                except ValueError:
+                    raise NvmError("Expected number of cameras, got {}".format(line))
+
+            elif state == 'cameras':
+                tokens = line.split()
+                try:
+                    params = map(float, tokens[-10:])
+                except IndexError:
+                    raise NvmError("Failed to parse camera on line {:d}".format(i))
+                focal, qw, qx, qy, qz, px, py, pz, radial, _ = params
+                filename = ''.join(tokens[:-10])
+                filename = os.path.split(filename)[-1]
+                q = Quaternion(qw, qx, qy, qz)
+                q.normalise()
+                qnorm = np.linalg.norm([q.w, q.x, q.y, q.z])
+                if not np.isclose(qnorm, 1.0):
+                    raise ValueError("{} had norm {}".format(q, qnorm))
+                p = np.array([px, py, pz])
+                frame_number = cls.frame_from_filename(filename)
+                t = frame_number / camera_fps
+                view_id = instance.add_view(t, p, q)
+
+                if len(instance.views) >= num_cameras:
+                    state = 'num_points'
+
+            elif state == 'num_points':
+                try:
+                    num_points = int(line)
+                    state = 'points'
+                except ValueError:
+                    raise ValueError("Expected number of points, got {}".format(line))
+
+            elif state == 'points':
+                tokens = line.split()
+                position = np.array(map(float, tokens[:3]))
+                color = np.array(map(int, tokens[3:6]), dtype='uint8')
+                num_meas = int(tokens[6])
+                if not len(tokens) == 7 + num_meas * 4:
+                    raise ValueError("Number of tokens: {}, expected {}".format(len(tokens), 7+num_meas*4))
+                image_indices = map(int, tokens[7::4])
+                visibility = image_indices
+                if load_measurements:
+                    meas_x = map(float, tokens[9::4])
+                    meas_y = map(float, tokens[10::4])
+                    #measurements = np.array(zip(meas_x, meas_y)).T
+                    observations = {v_id: np.array([x, y]) for v_id, x, y
+                                    in zip(image_indices, meas_x, meas_y)}
+                else:
+                    observations = image_indices
+
+                lm_id = instance.add_landmark(position, observations)
+
+                if len(instance.landmarks) >= num_points:
+                    state = 'model_done'
+
+            elif state == 'model_done':
+                if not line == '0':
+                    raise ValueError("Expected 0 to end model section, got {}".format(line))
+                state = 'all_done'
+
+            elif state == 'all_done':
+                if not line == '0':
+                    raise ValueError("Expected 0 to end file, got {}".format(line))
+                state = 'finish'
+
+            elif state == 'finish':
+                if line:
+                    raise ValueError("Expected nothing, got {}".format(line))
+
+            else:
+                raise ValueError("Unknown state {}".format(state))
+
+        instance.remap_views()
+        return instance

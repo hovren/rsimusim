@@ -20,12 +20,22 @@ class DatasetError(Exception):
     pass
 
 class Landmark(object):
-    __slots__ = ('position', '_color', 'visibility')
+    __slots__ = ('id', '_color', 'position', 'visibility', '_observations')
 
-    def __init__(self, position, visibility, color=None):
+    def __init__(self, _id, position, observations):
+        self.id = _id
         self.position = position
-        self.visibility = visibility
-        self._color = color
+        self._color = None
+        self.visibility = None # Set by observation setter
+        self._observations = observations
+
+    @property
+    def observations(self):
+        return self._observations
+
+    @observations.setter
+    def observations(self, obs):
+        self.visibility = set(obs.keys())
 
     @property
     def color(self):
@@ -134,6 +144,12 @@ class Dataset(object):
         for s in sfm_data.structure:
             visibility = set([remap[v] for v in s.observations.keys()])
             lm = Landmark(s.point, visibility, color=s.color)
+            self.landmarks.append(lm)
+
+    def landmarks_from_sfm(self, sfm):
+        view_times = [view.time for view in sfm.views]
+        self._landmark_bounds = create_bounds(np.array(sorted(view_times)))
+        for lm in sfm.landmarks:
             self.landmarks.append(lm)
 
     def visible_landmarks(self, t):
