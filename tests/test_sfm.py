@@ -6,6 +6,7 @@ import numpy.testing as nt
 import numpy as np
 
 from rsimusim.nvm import NvmLoader
+from rsimusim.openmvg_io import OpenMvgResult
 from rsimusim.sfm import SfmResult, SfmResultError
 from imusim.maths.quaternions import Quaternion
 
@@ -64,20 +65,54 @@ class LoaderTestsMixin(object):
         self.assertTrue(np.all(ids_diff == 1))
         self.assertTrue(np.all(times_diff > 0))
 
-    def test_landmark_data(self):
+    def test_landmark_handpicked(self):
         for lm_id, (pos, observations) in self.LANDMARK_TEST_DATA.items():
             lm = self.loader.landmarks[lm_id]
             self.assertEqual(lm.id, lm_id)
             nt.assert_almost_equal(lm.position, pos)
             remapped_obs = {self.VIEW_REMAP[v_id] : measurement for v_id, measurement in observations.items()}
             self.assertEqual(sorted(lm.visibility), sorted(remapped_obs.keys()))
+            X = np.array(pos).reshape(3,1)
             for view_id, measurement in remapped_obs.items():
-                nt.assert_almost_equal(lm.observations[view_id], measurement)
+                view = self.loader.views[view_id]
+                R = view.orientation.toMatrix()
+                p = view.position.reshape(3,1)
+                y_proj = np.dot(self.CAMERA_MATRIX, np.dot(R, X - p))
+                y_proj = y_proj[:2] / y_proj[2,0]
+                y_proj = y_proj.reshape(2,1)
+                y_expected = np.array(measurement).reshape(2,1)
+                distance = np.linalg.norm(y_proj - y_expected)
+                self.assertLess(distance, 10.0)
+
+    def test_landmark_all(self):
+        distance_list = []
+        for lm in self.loader.landmarks:
+            X = lm.position.reshape(3,1)
+            for view_id, measurement in lm.observations.items():
+                view = self.loader.views[view_id]
+                R = view.orientation.toMatrix()
+                p = view.position.reshape(3,1)
+                y_proj = np.dot(self.CAMERA_MATRIX, np.dot(R, X - p))
+                y_proj = y_proj[:2] / y_proj[2,0]
+                y_proj = y_proj.reshape(2,1)
+                y_expected = np.array(measurement).reshape(2,1)
+                distance = np.linalg.norm(y_proj - y_expected)
+                distance_list.append(distance)
+        #import matplotlib.pyplot as plt
+        #plt.hist(distance_list)
+        #plt.title(self.__class__.__name__)
+        #plt.show()
+        self.assertLess(np.mean(distance_list), 10)
 
 class NvmLoaderTests(LoaderTestsMixin, unittest.TestCase):
     EXAMPLE_NVM_FILE = 'example.nvm'
     NUM_VIEWS = 188
     NUM_LANDMARKS = 2682
+    CAMERA_MATRIX = np.array(
+        [[ 850.051391602,    0.        ,  0],
+         [ 0.        ,  850.051391602,  0],
+     [   0.        ,    0.        ,    1.        ]]
+    )
     VIEW_TEST_DATA = {
         0: ([-0.0304724108428, -0.0147310020402, 0.00404673162848],
              Quaternion(0.992442210987, -0.0560751916672, -0.105804611464, -0.0268352282614)),
@@ -165,3 +200,91 @@ class NvmLoaderTests(LoaderTestsMixin, unittest.TestCase):
 
     def setUp(self):
         self.loader = NvmLoader.from_file(self.EXAMPLE_NVM_FILE, CAMERA_FPS)
+
+class OpenMvgLoaderTests(LoaderTestsMixin, unittest.TestCase):
+    EXAMPLE_JSON_FILE = 'example_sfm_data.json'
+    NUM_VIEWS = 155
+    NUM_LANDMARKS = 9455
+    CAMERA_MATRIX = np.array(
+            [[ 862.43356025,    0.        ,  987.89341878],
+       [   0.        ,  862.43356025,  525.14469927],
+       [   0.        ,    0.        ,    1.        ]])
+    VIEW_TEST_DATA = {6: ([-0.0066135463687062891, 0.013110920711255216, 0.0054072737344219874],
+                          Quaternion(0.9599244193709499, 0.23327067225011502, 0.06151246987361936, 0.14263982127502603)),
+                      2: ([-0.0066137870300444221, 0.013110339773949207, 0.0054072891053267057],
+                          Quaternion(0.9971081514035066, 0.07364772448126028, -0.015545974958163908, -0.010472332405643518)),
+                      133: ([0.34388455081445496, 0.12327583235340298, 1.2324705149816222],
+                            Quaternion(0.32847610220097523, 0.03320448390508638, 0.9162407892228537, -0.2269443295077749)),
+                      122: ([0.74123424111363245, 0.2113942275019377, 1.6924068726636425],
+                            Quaternion(0.32957241455083724, 0.03125572389356408, 0.9310795494453806, -0.15328397142430536))
+                      }
+
+    LANDMARK_TEST_DATA = {
+        110: ([-1.8301917253379576, 0.17858422733881618, 1.7575707358917012],
+  {0: [88.970703125, 597.48699951171875],
+   1: [68.536598205566406, 565.15899658203125],
+   3: [49.993400573730469, 335.427001953125],
+   4: [134.62800598144531, 260.7550048828125],
+   13: [115.16699981689453, 437.16000366210938],
+   14: [57.579601287841797, 535.92498779296875],
+   16: [90.096099853515625, 589.989013671875],
+   25: [57.378101348876953, 558.448974609375],
+   26: [232.10800170898438, 533.4110107421875],
+   29: [274.84298706054688, 566.55902099609375]}),
+ 3800: ([0.17614115740727326, 0.36611671358235287, 1.5322134980217552],
+  {58: [1225.239990234375, 884.6619873046875],
+   59: [1219.1199951171875, 958.041015625],
+   60: [1055.1400146484375, 949.46197509765625],
+   61: [1009.1799926757812, 962.10198974609375],
+   63: [923.56298828125, 1060.9200439453125]}),
+ 4874: ([0.6931900643748532, 0.36680427728932175, 1.6509404810136892],
+  {61: [1749.4599609375, 926.48199462890625],
+   71: [1414.1500244140625, 856.9110107421875],
+   72: [1389.5699462890625, 846.447998046875]}),
+ 5470: ([-0.023667470986766217, 0.46416957579865487, 3.1836766325835555],
+  {74: [311.75399780273438, 616.3480224609375],
+   80: [322.13699340820312, 531.11199951171875],
+   81: [124.52999877929688, 501.6300048828125],
+   84: [13.078900337219238, 491.76300048828125]}),
+ 5529: ([2.7260641913540993, -0.083104783854676012, 5.5843447910482213],
+  {54: [1497.010009765625, 393.93600463867188],
+   56: [1394.0999755859375, 418.01400756835938],
+   59: [1708.77001953125, 472.87399291992188],
+   63: [1329.8599853515625, 516.76898193359375],
+   68: [1423.9300537109375, 424.32699584960938],
+   82: [594.95001220703125, 440.81100463867188],
+   85: [901.7230224609375, 438.49398803710938],
+   86: [703.49798583984375, 442.0369873046875]}),
+ 6543: ([1.7826277020717853, -0.11553762349330475, 2.6822758354074163],
+  {97: [1385.8599853515625, 261.66400146484375],
+   98: [1425.239990234375, 277.48599243164062],
+   99: [1480.3699951171875, 287.7550048828125],
+   100: [1477.3599853515625, 290.3699951171875],
+   101: [1419.949951171875, 299.8070068359375],
+   102: [1268.4200439453125, 304.7919921875],
+   105: [880.9229736328125, 267.33499145507812],
+   106: [716.08001708984375, 262.72799682617188],
+   107: [476.38800048828125, 331.8280029296875],
+   108: [414.32699584960938, 320.77999877929688],
+   109: [370.92999267578125, 334.29000854492188],
+   110: [234.22500610351562, 321.927001953125],
+   111: [120.72000122070312, 285.86300659179688]}),
+ 6967: ([1.185226833635985, 0.43459029155665507, 2.0353546432899656],
+  {96: [1746.25, 969.9940185546875],
+   97: [1831.68994140625, 981.5689697265625],
+   104: [1264.25, 1014.0999755859375],
+   105: [1144.5400390625, 992.63897705078125],
+   106: [981.8480224609375, 1001.0999755859375]}),
+ 7416: ([0.42946526292622439, 0.31996086704851645, 1.2091637549430783],
+  {116: [1230.9599609375, 784.20599365234375],
+   117: [1148.9000244140625, 784.10797119140625],
+   119: [1108.8900146484375, 887.697998046875],
+   120: [1062.68994140625, 912.8280029296875],
+   121: [984.72198486328125, 898.9949951171875],
+   122: [936.14501953125, 962.80902099609375]})
+    }
+
+    VIEW_REMAP = {i : i for i in range(NUM_VIEWS)} # Already ordered
+
+    def setUp(self):
+        self.loader = OpenMvgResult.from_file(self.EXAMPLE_JSON_FILE, CAMERA_FPS)
