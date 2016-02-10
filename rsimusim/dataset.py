@@ -29,12 +29,16 @@ class Landmark(object):
         self.visibility = None # Set by observation setter
         self._observations = observations
 
+    def __repr__(self):
+        return '<Landmark #{id:d} ({X[0]:.2f}, {X[1]:.2f}, {X[2]:.2f})>'.format(id=self.id, X=self.position)
+
     @property
     def observations(self):
         return self._observations
 
     @observations.setter
     def observations(self, obs):
+        self._observations = obs
         self.visibility = set(obs.keys())
 
     @property
@@ -77,6 +81,23 @@ class Dataset(object):
         view_pos = np.vstack([v.c for v in views]).T
         ts = TimeSeries(view_times, view_pos)
         self._position_data = ts
+        self._update_trajectory()
+
+    def position_from_sfm(self, sfm):
+        view_times = np.array([v.time for v in sfm.views])
+        view_positions = np.vstack([v.position for v in sfm.views]).T
+        ts = TimeSeries(view_times, view_positions)
+        self._position_data = ts
+        self._update_trajectory()
+
+    def orientation_from_sfm(self, sfm):
+        view_times = np.array([v.time for v in sfm.views])
+        view_orientations = QuaternionArray([v.orientation for v in sfm.views])
+        view_orientations = view_orientations.unflipped()
+        # Resampling is important to get good splines
+        view_orientations, view_times = resample_quaternion_array(view_orientations, view_times)
+        ts = TimeSeries(view_times, view_orientations)
+        self._orientation_data = ts
         self._update_trajectory()
 
     def orientation_from_nvm(self, nvm_model, frame_to_time_func=None, camera_fps=None):
@@ -148,7 +169,10 @@ class Dataset(object):
 
     def landmarks_from_sfm(self, sfm):
         view_times = [view.time for view in sfm.views]
-        self._landmark_bounds = create_bounds(np.array(sorted(view_times)))
+        if not np.all(np.diff(view_times) > 0):
+            raise DatasetError("View times are not increasing monotonically with id")
+
+        self._landmark_bounds = create_bounds(view_times)
         for lm in sfm.landmarks:
             self.landmarks.append(lm)
 

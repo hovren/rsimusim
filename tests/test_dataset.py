@@ -27,6 +27,12 @@ GYRO_EXAMPLE_DATA_Q = QuaternionArray(GYRO_EXAMPLE_DATA_INT)
 assert len(GYRO_EXAMPLE_DATA_Q) == len(GYRO_EXAMPLE_TIMES)
 CAMERA_FPS = 30.
 
+CAMERA_MATRIX_REAL = np.array(
+    [[ 853.12703455,    0.        ,  988.06311256],
+     [   0.        ,  873.54956631,  525.71056312],
+     [   0.        ,    0.        ,    1.        ]]
+)
+
 class DatasetTests(unittest.TestCase):
     def test_position_from_nvm(self):
         nvm = NvmModel.from_file(NVM_EXAMPLE)
@@ -209,11 +215,80 @@ class AbstractDatasetSfmTestMixin(object):
     def load_dataset(self):
         self.ds = Dataset()
         self.ds.landmarks_from_sfm(self.sfm)
+        self.ds.position_from_sfm(self.sfm)
+        self.ds.orientation_from_sfm(self.sfm)
 
     def test_landmarks_loaded(self):
         self.assertEqual(len(self.ds.landmarks), len(self.sfm.landmarks))
 
+    def test_positions(self):
+        position = self.ds.trajectory.position
+        num_tried = 0
+        for view in self.sfm.views:
+            if self.ds.trajectory.startTime <= view.time <= self.ds.trajectory.endTime:
+                p = position(view.time).ravel()
+                nt.assert_almost_equal(p, view.position, decimal=2)
+                num_tried += 1
+        self.assertGreater(num_tried, 0)
+
+
+    def test_orientations(self):
+        num_tried = 0
+        trajectory = self.ds.trajectory
+        for view in self.sfm.views:
+            if trajectory.startTime < view.time < trajectory.endTime:
+                vq = view.orientation
+                q = trajectory.rotation(view.time)
+                if view.orientation.dot(q) < 0:
+                    q = -q
+                nt.assert_almost_equal(q.components, vq.components, decimal=1)
+                num_tried += 1
+        self.assertGreater(num_tried, 0)
+
+
+    def test_projection(self):
+        max_mean_reproj_error = 30.0 # Pixels
+        num_test = min(500, len(self.ds.landmarks))
+        chosen_landmarks = [self.ds.landmarks[i] for i in np.random.choice(len(self.ds.landmarks), num_test)]
+        corresp_landmarks = [self.sfm.landmarks[lm.id] for lm in chosen_landmarks]
+        distance_list = []
+        for ds_lm, sfm_lm in zip(chosen_landmarks, corresp_landmarks):
+            self.assertEqual(ds_lm.id, sfm_lm.id)
+            X = ds_lm.position.reshape(3,1)
+            for bound_id in ds_lm.visibility:
+                ta, tb = self.ds._landmark_bounds[bound_id:bound_id+2]
+                matching_views = [v for v in self.sfm.views if ta <= v.time <= tb]
+                self.assertEqual(len(matching_views), 1)
+                view = matching_views[0]
+                t = view.time
+                y_expected = ds_lm.observations[view.id].reshape(2,1)
+                if self.ds.trajectory.startTime <= t <= self.ds.trajectory.endTime:
+                    q = self.ds.trajectory.rotation(t)
+                    R = q.toMatrix()
+                    p = self.ds.trajectory.position(t).reshape(3,1)
+                    X_view = np.dot(R, X - p)
+                    self.assertEqual(X_view.shape, (3,1))
+                    y = np.dot(self.CAMERA_MATRIX, X_view)
+                    self.assertEqual(y.size, 3)
+                    y = y[:2] / y[2,0]
+                    self.assertEqual(y.size, 2)
+                    distance = np.linalg.norm(y - y_expected)
+                    distance_list.append(distance)
+                    #self.assertLess(distance, max_reproj_error)
+        #import matplotlib.pyplot as plt
+        #plt.hist(distance_list)
+        #plt.title(self.__class__.__name__)
+        #plt.show()
+        self.assertLess(np.mean(distance_list), max_mean_reproj_error)
+
+
+
 class DatasetFromNvmTests(AbstractDatasetSfmTestMixin, unittest.TestCase):
+    CAMERA_MATRIX = np.array(
+        [[ 850.051391602,    0.        ,  0],
+         [ 0.        ,  850.051391602,  0],
+     [   0.        ,    0.        ,    1.        ]]
+)
     def setUp(self):
         self.sfm = NvmLoader.from_file(NVM_EXAMPLE, CAMERA_FPS)
         self.load_dataset()

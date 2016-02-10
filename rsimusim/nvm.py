@@ -242,9 +242,8 @@ class NvmLoader(SfmResult):
                 filename = os.path.split(filename)[-1]
                 q = Quaternion(qw, qx, qy, qz)
                 q.normalise()
-                qnorm = np.linalg.norm([q.w, q.x, q.y, q.z])
-                if not np.isclose(qnorm, 1.0):
-                    raise ValueError("{} had norm {}".format(q, qnorm))
+                if not np.isclose(q.magnitude, 1.0):
+                    raise ValueError("{} had norm {}".format(q, q.magnitude))
                 p = np.array([px, py, pz])
                 frame_number = cls.frame_from_filename(filename)
                 t = frame_number / camera_fps
