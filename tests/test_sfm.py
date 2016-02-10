@@ -71,8 +71,8 @@ class LoaderTestsMixin(object):
             nt.assert_almost_equal(lm.position, pos)
             remapped_obs = {self.VIEW_REMAP[v_id] : measurement for v_id, measurement in observations.items()}
             self.assertEqual(sorted(lm.visibility), sorted(remapped_obs.keys()))
-            for lm_id, measurement in observations.items():
-                nt.assert_almost_equal(lm.observations[lm_id], measurement)
+            for view_id, measurement in remapped_obs.items():
+                nt.assert_almost_equal(lm.observations[view_id], measurement)
 
 class NvmLoaderTests(LoaderTestsMixin, unittest.TestCase):
     EXAMPLE_NVM_FILE = 'example.nvm'
