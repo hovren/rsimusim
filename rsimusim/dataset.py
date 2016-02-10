@@ -78,7 +78,7 @@ class Dataset(object):
         frame_time = frame_to_time_func if frame_to_time_func else lambda n: float(n) / camera_fps
         views = sorted(sfm_data.views, key=lambda v: v.framenumber)
         view_times = np.array([frame_time(v.framenumber) for v in views])
-        view_pos = np.vstack([v.c for v in views]).T
+        view_pos = np.vstack([v.c for v in views])
         ts = TimeSeries(view_times, view_pos)
         self._position_data = ts
         self._update_trajectory()
