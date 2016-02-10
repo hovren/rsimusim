@@ -6,7 +6,9 @@ import numpy as np
 import cv2
 import os
 from imusim.utilities.time_series import TimeSeries
+from imusim.maths.quaternions import Quaternion
 from imusim.trajectories.splined import SplinedPositionTrajectory, SampledPositionTrajectory
+from .sfm import SfmResult
 
 
 class View(namedtuple('View', ['id', 'filename', 'intrinsic', 'R', 'c'])):
@@ -194,3 +196,25 @@ class SfMData(object):
 
         return cls.create_rescaled(sfm_data, scale_factor)
 
+
+class OpenMvgResult(SfmResult):
+    @classmethod
+    def from_file(cls, filename, camera_fps):
+        sfm_data = SfMData.from_json(filename)
+        instance = cls()
+        view_remap = {}
+        for omvg_view in sfm_data.views:
+            time = omvg_view.framenumber / camera_fps
+            q = Quaternion.fromMatrix(omvg_view.R)
+            p = omvg_view.c
+            new_id = instance.add_view(time, p, q)
+            view_remap[omvg_view.id] = new_id
+
+        for s in sfm_data.structure:
+            X = s.point
+            observations = { view_remap[view_id] : xy for view_id, xy in s.observations.items()}
+            instance.add_landmark(X, observations)
+
+        # Rearrage views in ascending time order
+        instance.remap_views()
+        return instance
