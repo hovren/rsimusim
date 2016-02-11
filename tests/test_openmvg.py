@@ -3,7 +3,7 @@ import unittest
 import numpy as np
 import numpy.testing as nt
 
-from rsimusim.openmvg_io import SfMData
+from rsimusim.openmvg import SfMData
 
 POSE_143 = (
     np.array([[-0.8913088105868323,

@@ -13,9 +13,7 @@ from imusim.maths.quaternions import Quaternion, QuaternionArray
 
 from rsimusim.dataset import Dataset, DatasetBuilder, DatasetError, \
     resample_quaternion_array, quaternion_slerp, quaternion_array_interpolate, create_bounds
-from rsimusim.nvm import NvmModel, NvmLoader
-from rsimusim.openmvg_io import SfMData, OpenMvgResult
-from rsimusim.sfm import SfmResult
+from rsimusim.sfm import SfmResult, VisualSfmResult, OpenMvgResult
 from tests.helpers import random_orientation, unpack_quat, gyro_data_to_quaternion_array, find_landmark
 
 NVM_EXAMPLE = 'example.nvm'
@@ -86,18 +84,16 @@ class DatasetGyroTests(unittest.TestCase):
             ds.orientation_from_gyro(gyro_data, gyro_times_invalid)
 
     def test_resample_quaternion_array(self):
-        nvm = NvmModel.from_file(NVM_EXAMPLE)
-        cameras = sorted(nvm.cameras, key=lambda c: c.framenumber)
-        Q = QuaternionArray([c.orientation for c in cameras])
+        sfm = VisualSfmResult.from_file(NVM_EXAMPLE, camera_fps=CAMERA_FPS)
+        Q = QuaternionArray([view.orientation for view in sfm.views])
         Q = Q.unflipped()
-        camera_fps = 30.
-        camera_times = np.array([c.framenumber / camera_fps for c in cameras])
+        view_times = np.array([view.time for view in sfm.views])
         new_size = 500
-        Q_resamp, Q_t = resample_quaternion_array(Q, camera_times, resize=new_size)
+        Q_resamp, Q_t = resample_quaternion_array(Q, view_times, resize=new_size)
         self.assertEqual(len(Q_resamp), len(Q_t))
         self.assertEqual(len(Q_resamp), new_size)
-        nt.assert_almost_equal(Q_t[0], camera_times[0])
-        nt.assert_almost_equal(Q_t[-1], camera_times[-1])
+        nt.assert_almost_equal(Q_t[0], view_times[0])
+        nt.assert_almost_equal(Q_t[-1], view_times[-1])
         nt.assert_almost_equal(unpack_quat(Q_resamp[0]), unpack_quat(Q[0]))
         nt.assert_almost_equal(unpack_quat(Q_resamp[-1]), unpack_quat(Q[-1]))
 
@@ -218,7 +214,7 @@ class DatasetFromNvmTests(AbstractDatasetSfmTestMixin, unittest.TestCase):
      [   0.        ,    0.        ,    1.        ]]
 )
     def setUp(self):
-        self.sfm = NvmLoader.from_file(NVM_EXAMPLE, CAMERA_FPS)
+        self.sfm = VisualSfmResult.from_file(NVM_EXAMPLE, CAMERA_FPS)
         self.load_dataset()
 
 
@@ -255,7 +251,7 @@ class DatasetBuilderGeneralTests(unittest.TestCase):
 
     def test_missing_source_fail(self):
         db = DatasetBuilder()
-        sfm = NvmLoader.from_file(NVM_EXAMPLE, camera_fps=30.)
+        sfm = VisualSfmResult.from_file(NVM_EXAMPLE, camera_fps=30.)
         db.add_source_sfm(sfm)
         with self.assertRaises(DatasetError):
             db.build()
@@ -441,7 +437,7 @@ class DatasetBuilderSfmMixin(object):
 
 class DatasetBuilderNvm(DatasetBuilderSfmMixin, unittest.TestCase):
     def setUp(self):
-        self.sfm = NvmLoader.from_file(NVM_EXAMPLE, camera_fps=CAMERA_FPS)
+        self.sfm = VisualSfmResult.from_file(NVM_EXAMPLE, camera_fps=CAMERA_FPS)
 
 class DatasetBuilderOpenMvg(DatasetBuilderSfmMixin, unittest.TestCase):
     def setUp(self):
@@ -451,7 +447,7 @@ class DatasetSaveTests(unittest.TestCase):
     def setUp(self):
         db = DatasetBuilder()
         db.add_source_gyro(GYRO_EXAMPLE_DATA, GYRO_EXAMPLE_TIMES)
-        sfm = NvmLoader.from_file(NVM_EXAMPLE, camera_fps=CAMERA_FPS)
+        sfm = VisualSfmResult.from_file(NVM_EXAMPLE, camera_fps=CAMERA_FPS)
         db.add_source_sfm(sfm)
         db.set_landmark_source('sfm')
         db.set_orientation_source('imu')

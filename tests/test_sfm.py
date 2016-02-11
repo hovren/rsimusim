@@ -5,9 +5,7 @@ import unittest
 import numpy.testing as nt
 import numpy as np
 
-from rsimusim.nvm import NvmLoader
-from rsimusim.openmvg_io import OpenMvgResult
-from rsimusim.sfm import SfmResult, SfmResultError
+from rsimusim.sfm import SfmResult, SfmResultError, VisualSfmResult, OpenMvgResult
 from imusim.maths.quaternions import Quaternion
 
 CAMERA_FPS = 30.
@@ -199,7 +197,7 @@ class NvmLoaderTests(LoaderTestsMixin, unittest.TestCase):
                   178: 132, 179: 181, 180: 179, 181: 186, 182: 185, 183: 187, 184: 184, 185: 180, 186: 174, 187: 175}
 
     def setUp(self):
-        self.loader = NvmLoader.from_file(self.EXAMPLE_NVM_FILE, CAMERA_FPS)
+        self.loader = VisualSfmResult.from_file(self.EXAMPLE_NVM_FILE, CAMERA_FPS)
 
 class OpenMvgLoaderTests(LoaderTestsMixin, unittest.TestCase):
     EXAMPLE_JSON_FILE = 'example_sfm_data.json'
