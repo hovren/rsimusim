@@ -73,6 +73,20 @@ class SfmResult(object):
         self.landmarks.append(lm)
         return _id
 
+    def rescaled(self, scale_factor):
+        sfm_r = SfmResult()
+        for view in self.views:
+            new_pos = scale_factor * view.position
+            v_r = View(view.id, view.time, new_pos, view.orientation)
+            sfm_r.views.append(v_r)
+
+        for lm in self.landmarks:
+            new_pos = scale_factor * lm.position
+            lm_r = Landmark(lm.id, new_pos, lm.observations, color=lm.color)
+            sfm_r.landmarks.append(lm_r)
+
+        return sfm_r
+
 
 class VisualSfmResult(SfmResult):
     @property

@@ -181,6 +181,34 @@ class Dataset(object):
                           quiver_data[0], quiver_data[1], quiver_data[2], color=(1, 1, 0))
         mlab.show()
 
+    def rescaled(self, scale_factor):
+        ds_r = Dataset()
+        ds_r._landmark_bounds = self._landmark_bounds
+        ds_r._position_data = TimeSeries(self._position_data.timestamps,
+                                         scale_factor * self._position_data.values)
+        ds_r._orientation_data = TimeSeries(self._orientation_data.timestamps,
+                                            self._orientation_data.values)
+        ds_r._update_trajectory()
+
+        for lm in self.landmarks:
+            new_pos = scale_factor * lm.position
+            lm_r = Landmark(lm.id, new_pos, lm.observations, color=lm.color)
+            ds_r.landmarks.append(lm_r)
+
+        return ds_r
+
+    def rescaled_avg_speed(self, avg_speed):
+        travel_time = self.trajectory.endTime - self.trajectory.startTime
+        dt = 0.01 # seconds
+        num_samples = travel_time / dt
+        t = np.linspace(self.trajectory.startTime, self.trajectory.endTime, num=num_samples)
+        velocity = self.trajectory.velocity(t) # Global frame, but OK since we want length only
+        speed = np.linalg.norm(velocity, axis=0)
+        distance = np.trapz(speed, dx=dt)
+        scale = avg_speed * travel_time / distance
+        return self.rescaled(scale)
+
+
     @classmethod
     def from_file(cls, filepath):
         instance = cls()

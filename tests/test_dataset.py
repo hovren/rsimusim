@@ -435,6 +435,55 @@ class DatasetBuilderSfmMixin(object):
         fig2.savefig('/tmp/{}_q.pdf'.format(self.__class__.__name__))
         plt.show()
 
+    def test_rescale(self):
+        db = DatasetBuilder()
+        db.add_source_sfm(self.sfm)
+        db.set_landmark_source('sfm')
+        db.set_position_source('sfm')
+        db.set_orientation_source('sfm')
+        ds = db.build()
+
+        t = np.linspace(ds.trajectory.startTime, ds.trajectory.endTime)
+        pos_org = ds.trajectory.position(t)
+        rot_org = ds.trajectory.rotation(t)
+
+        for scale_factor in [0.1, 10.0]:
+            ds_r = ds.rescaled(scale_factor)
+            self.assertEqual(len(ds_r.landmarks), len(ds.landmarks))
+            for lm_r, lm in zip(ds_r.landmarks, ds.landmarks):
+                self.assertEqual(lm_r.id, lm.id)
+                nt.assert_almost_equal(lm_r.position, scale_factor * lm.position)
+                self.assertEqual(sorted(lm_r.visibility), sorted(lm.visibility))
+
+            pos = ds_r.trajectory.position(t)
+            rot = ds_r.trajectory.rotation(t)
+
+            nt.assert_almost_equal(pos, scale_factor * pos_org, decimal=1)
+            nt.assert_equal(rot.array, rot_org.array)
+
+    def test_rescale_speed(self):
+        db = DatasetBuilder()
+        db.add_source_sfm(self.sfm)
+        db.set_landmark_source('sfm')
+        db.set_position_source('sfm')
+        db.set_orientation_source('sfm')
+        ds = db.build()
+
+        t = np.linspace(ds.trajectory.startTime, ds.trajectory.endTime)
+        pos_org = ds.trajectory.position(t)
+        rot_org = ds.trajectory.rotation(t)
+
+        for speed in [1.4, 5]:
+            ds_r = ds.rescaled_avg_speed(speed)
+            pos = ds_r.trajectory.position(t)
+            rot = ds_r.trajectory.rotation(t)
+
+            nt.assert_equal(rot.array, rot_org.array)
+
+            scale_arr = pos_org / pos
+            nt.assert_allclose(scale_arr, np.mean(scale_arr), atol=0.2, rtol=1e-2)
+
+
 class DatasetBuilderNvm(DatasetBuilderSfmMixin, unittest.TestCase):
     def setUp(self):
         self.sfm = VisualSfmResult.from_file(NVM_EXAMPLE, camera_fps=CAMERA_FPS)

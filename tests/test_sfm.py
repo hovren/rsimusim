@@ -12,52 +12,52 @@ CAMERA_FPS = 30.
 
 class SfmLoaderTests(unittest.TestCase):
     def setUp(self):
-        self.loader = SfmResult()
+        self.sfm = SfmResult()
 
     def test_add_view(self):
-        id1 = self.loader.add_view(0, 0, 0)
-        id2 = self.loader.add_view(0, 0, 0)
+        id1 = self.sfm.add_view(0, 0, 0)
+        id2 = self.sfm.add_view(0, 0, 0)
         self.assertNotEqual(id1, id2)
-        self.assertEqual(len(self.loader.views), 2)
-        self.assertEqual(self.loader.views[id1].id, id1)
-        self.assertEqual(self.loader.views[id2].id, id2)
+        self.assertEqual(len(self.sfm.views), 2)
+        self.assertEqual(self.sfm.views[id1].id, id1)
+        self.assertEqual(self.sfm.views[id2].id, id2)
 
     def test_add_landmark_no_view(self):
-        self.loader.add_view(0, 0, 0) # view_id = 0
-        self.loader.add_view(0, 0, 0) # view_id = 1
+        self.sfm.add_view(0, 0, 0) # view_id = 0
+        self.sfm.add_view(0, 0, 0) # view_id = 1
         pos = 0
         visibility = [0, 1, 2]
         with self.assertRaises(SfmResultError):
-            self.loader.add_landmark(pos, visibility)
+            self.sfm.add_landmark(pos, visibility)
 
     def test_add_landmark(self):
-        self.loader.add_view(0, 0, 0)
-        self.loader.add_view(0, 0, 0)
-        self.loader.add_landmark(0, [0, 1])
-        self.loader.add_landmark(0, [0])
-        self.loader.add_landmark(0, [1])
-        self.assertEqual(len(self.loader.landmarks), 3)
+        self.sfm.add_view(0, 0, 0)
+        self.sfm.add_view(0, 0, 0)
+        self.sfm.add_landmark(0, [0, 1])
+        self.sfm.add_landmark(0, [0])
+        self.sfm.add_landmark(0, [1])
+        self.assertEqual(len(self.sfm.landmarks), 3)
 
 
 class LoaderTestsMixin(object):
     def test_num_cameras_loaded(self):
-        self.assertEqual(len(self.loader.views), self.NUM_VIEWS)
+        self.assertEqual(len(self.sfm.views), self.NUM_VIEWS)
 
     def test_num_landmarks_loaded(self):
-        self.assertEqual(len(self.loader.landmarks), self.NUM_LANDMARKS)
+        self.assertEqual(len(self.sfm.landmarks), self.NUM_LANDMARKS)
 
     def test_view_data(self):
         for orig_id, (pos, rot) in self.VIEW_TEST_DATA.items():
             v_id = self.VIEW_REMAP[orig_id]
-            view = self.loader.views[v_id]
+            view = self.sfm.views[v_id]
             self.assertEqual(view.id, v_id)
             nt.assert_almost_equal(view.position, pos)
             dq = view.orientation - rot
             self.assertAlmostEqual(dq.magnitude, 0, places=5)
 
     def test_view_time_order(self):
-        ids = [v.id for v in self.loader.views]
-        times = [v.time for v in self.loader.views]
+        ids = [v.id for v in self.sfm.views]
+        times = [v.time for v in self.sfm.views]
         ids_diff = np.diff(ids)
         times_diff = np.diff(times)
         self.assertTrue(np.all(ids_diff == 1))
@@ -65,14 +65,14 @@ class LoaderTestsMixin(object):
 
     def test_landmark_handpicked(self):
         for lm_id, (pos, observations) in self.LANDMARK_TEST_DATA.items():
-            lm = self.loader.landmarks[lm_id]
+            lm = self.sfm.landmarks[lm_id]
             self.assertEqual(lm.id, lm_id)
             nt.assert_almost_equal(lm.position, pos)
             remapped_obs = {self.VIEW_REMAP[v_id] : measurement for v_id, measurement in observations.items()}
             self.assertEqual(sorted(lm.visibility), sorted(remapped_obs.keys()))
             X = np.array(pos).reshape(3,1)
             for view_id, measurement in remapped_obs.items():
-                view = self.loader.views[view_id]
+                view = self.sfm.views[view_id]
                 R = view.orientation.toMatrix()
                 p = view.position.reshape(3,1)
                 y_proj = np.dot(self.CAMERA_MATRIX, np.dot(R, X - p))
@@ -84,10 +84,10 @@ class LoaderTestsMixin(object):
 
     def test_landmark_all(self):
         distance_list = []
-        for lm in self.loader.landmarks:
+        for lm in self.sfm.landmarks:
             X = lm.position.reshape(3,1)
             for view_id, measurement in lm.observations.items():
-                view = self.loader.views[view_id]
+                view = self.sfm.views[view_id]
                 R = view.orientation.toMatrix()
                 p = view.position.reshape(3,1)
                 y_proj = np.dot(self.CAMERA_MATRIX, np.dot(R, X - p))
@@ -101,6 +101,25 @@ class LoaderTestsMixin(object):
         #plt.title(self.__class__.__name__)
         #plt.show()
         self.assertLess(np.mean(distance_list), 10)
+
+    def test_rescale(self):
+        scales = [0.1, 10.0]
+        for scale_factor in scales:
+            sfm_r = self.sfm.rescaled(scale_factor)
+
+            self.assertEqual(len(sfm_r.views), len(self.sfm.views))
+            for v, v_r in zip(self.sfm.views, sfm_r.views):
+                self.assertEqual(v_r.id, v.id)
+                self.assertEqual(v_r.time, v.time)
+                nt.assert_almost_equal(v_r.position, scale_factor * v.position)
+                nt.assert_equal(v_r.orientation.components, v.orientation.components)
+
+            self.assertEqual(len(sfm_r.landmarks), len(self.sfm.landmarks))
+            for lm, lm_r in zip(self.sfm.landmarks, sfm_r.landmarks):
+                self.assertEqual(lm_r.id, lm.id)
+                nt.assert_almost_equal(lm_r.position, scale_factor * lm.position)
+                self.assertEqual(sorted(lm_r.visibility), sorted(lm.visibility))
+
 
 class NvmLoaderTests(LoaderTestsMixin, unittest.TestCase):
     EXAMPLE_NVM_FILE = 'example.nvm'
@@ -197,7 +216,7 @@ class NvmLoaderTests(LoaderTestsMixin, unittest.TestCase):
                   178: 132, 179: 181, 180: 179, 181: 186, 182: 185, 183: 187, 184: 184, 185: 180, 186: 174, 187: 175}
 
     def setUp(self):
-        self.loader = VisualSfmResult.from_file(self.EXAMPLE_NVM_FILE, CAMERA_FPS)
+        self.sfm = VisualSfmResult.from_file(self.EXAMPLE_NVM_FILE, CAMERA_FPS)
 
 class OpenMvgLoaderTests(LoaderTestsMixin, unittest.TestCase):
     EXAMPLE_JSON_FILE = 'example_sfm_data.json'
@@ -285,4 +304,4 @@ class OpenMvgLoaderTests(LoaderTestsMixin, unittest.TestCase):
     VIEW_REMAP = {i : i for i in range(NUM_VIEWS)} # Already ordered
 
     def setUp(self):
-        self.loader = OpenMvgResult.from_file(self.EXAMPLE_JSON_FILE, CAMERA_FPS)
+        self.sfm = OpenMvgResult.from_file(self.EXAMPLE_JSON_FILE, CAMERA_FPS)
