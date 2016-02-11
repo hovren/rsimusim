@@ -14,7 +14,8 @@ from imusim.maths.quaternions import Quaternion, QuaternionArray
 from rsimusim.dataset import Dataset, DatasetBuilder, DatasetError, \
     resample_quaternion_array, quaternion_slerp, quaternion_array_interpolate, create_bounds
 from rsimusim.nvm import NvmModel, NvmLoader
-from rsimusim.openmvg_io import SfMData
+from rsimusim.openmvg_io import SfMData, OpenMvgResult
+from rsimusim.sfm import SfmResult
 from tests.helpers import random_orientation, unpack_quat, gyro_data_to_quaternion_array, find_landmark
 
 NVM_EXAMPLE = 'example.nvm'
@@ -27,62 +28,7 @@ GYRO_EXAMPLE_DATA_Q = QuaternionArray(GYRO_EXAMPLE_DATA_INT)
 assert len(GYRO_EXAMPLE_DATA_Q) == len(GYRO_EXAMPLE_TIMES)
 CAMERA_FPS = 30.
 
-CAMERA_MATRIX_REAL = np.array(
-    [[ 853.12703455,    0.        ,  988.06311256],
-     [   0.        ,  873.54956631,  525.71056312],
-     [   0.        ,    0.        ,    1.        ]]
-)
-
-class DatasetTests(unittest.TestCase):
-    def test_position_from_nvm(self):
-        nvm = NvmModel.from_file(NVM_EXAMPLE)
-        ds = Dataset()
-        camera_fps = 30.0
-        ds.position_from_nvm(nvm, camera_fps=camera_fps)
-
-        cameras = [nvm.cameras[i] for i in
-                   np.random.choice(len(nvm.cameras), size=10, replace=False)]
-        for camera in cameras:
-            camera_time = camera.framenumber / camera_fps
-            ds_pos = ds.trajectory.position(camera_time).flatten()
-            if np.all(np.isnan(ds_pos)):
-                continue
-            nt.assert_almost_equal(ds_pos, camera.position, decimal=1)
-
-    def test_position_from_openmvg(self):
-        sfm_data = SfMData.from_json(OPENMVG_EXAMPLE)
-        ds = Dataset()
-        camera_fps = 30.0
-        ds.position_from_openmvg(sfm_data, camera_fps=camera_fps)
-
-        views = [sfm_data.views[i] for i in
-                   np.random.choice(len(sfm_data.views), size=10, replace=False)]
-        for view in views:
-            view_time = view.framenumber / camera_fps
-            ds_pos = ds.trajectory.position(view_time).flatten()
-            if np.all(np.isnan(ds_pos)):
-                continue
-            nt.assert_almost_equal(ds_pos, view.c, decimal=1)
-
-    def test_orientation_from_nvm(self):
-        nvm = NvmModel.from_file(NVM_EXAMPLE)
-        camera_fps = 30.0
-        ds = Dataset()
-        ds.orientation_from_nvm(nvm, camera_fps=camera_fps)
-
-        for camera in nvm.cameras:
-            camera_time = camera.framenumber / camera_fps
-            ds_rot = ds.trajectory.rotation(camera_time)
-            if np.all(np.isnan(unpack_quat(ds_rot))):
-                continue
-            cam_rot = camera.orientation
-            # Normalize sign before comparison
-            # Normalize by largest element to avoid near-zero sign problems
-            i = np.argmax(np.abs(unpack_quat(cam_rot)))
-            ds_rot *= np.sign(unpack_quat(ds_rot)[i])
-            cam_rot *= np.sign(unpack_quat(cam_rot)[i])
-            nt.assert_almost_equal(unpack_quat(ds_rot), unpack_quat(cam_rot), decimal=1)
-
+class DatasetGyroTests(unittest.TestCase):
     def test_orientation_from_gyro(self):
         ds = Dataset()
         ds.orientation_from_gyro(GYRO_EXAMPLE_DATA, GYRO_EXAMPLE_TIMES)
@@ -139,61 +85,6 @@ class DatasetTests(unittest.TestCase):
         with self.assertRaises(DatasetError):
             ds.orientation_from_gyro(gyro_data, gyro_times_invalid)
 
-    def test_landmarks_from_nvm(self):
-        nvm = NvmModel.from_file(NVM_EXAMPLE)
-        camera_fps = 30.0
-        ds = Dataset()
-        ds.landmarks_from_nvm(nvm, camera_fps)
-
-        self.assertEqual(len(ds.landmarks), len(nvm.points))
-        for ds_p, nvm_p in zip(ds.landmarks, nvm.points):
-            nt.assert_equal(ds_p.position, nvm_p.position)
-            nt.assert_equal(ds_p.color, nvm_p.color)
-
-        # Select a few points
-        pt_idx = np.random.choice(len(nvm.points), 25, replace=False)
-        for i in pt_idx:
-            p = nvm.points[i]
-            for camera in nvm.cameras:
-                t = camera.framenumber / camera_fps
-                landmarks = ds.visible_landmarks(t)
-                if camera.id in p.visibility:
-                    lm = find_landmark(p.position, landmarks)
-                    self.assertIsNotNone(lm, "t={:.3f}, vis={}, bounds={}".format(
-                        t, p.visibility, ds._landmark_bounds
-                    ))
-                    nt.assert_almost_equal(lm.position, p.position)
-                else:
-                    lm = find_landmark(p.position, landmarks)
-                    self.assertIsNone(lm)
-
-    def test_landmarks_from_openmvg(self):
-        sfm_data = SfMData.from_json(OPENMVG_EXAMPLE, color=False)
-        ds = Dataset()
-        camera_fps = 30.0
-        ds.landmarks_from_openmvg(sfm_data, camera_fps)
-        self.assertEqual(len(ds.landmarks), len(sfm_data.structure))
-        for ds_p, mvg_p in zip(ds.landmarks, sfm_data.structure):
-            nt.assert_equal(ds_p.position, mvg_p.point)
-            self.assertIsNone(ds_p.color) # No colors loaded
-
-        # Select a few points
-        pt_idx = np.random.choice(len(sfm_data.structure), 200, replace=False)
-        for i in pt_idx:
-            s = sfm_data.structure[i]
-            for view in sfm_data.views:
-                t = view.framenumber / camera_fps
-                landmarks = ds.visible_landmarks(t)
-                if view.id in s.observations:
-                    lm = find_landmark(s.point, landmarks)
-                    self.assertIsNotNone(lm, "t={:.3f}, vis={}, bounds={}".format(
-                        t, s.observations.keys(), ds._landmark_bounds
-                    ))
-                    nt.assert_almost_equal(lm.position, s.point)
-                else:
-                    lm = find_landmark(s.point, landmarks)
-                    self.assertIsNone(lm)
-
     def test_resample_quaternion_array(self):
         nvm = NvmModel.from_file(NVM_EXAMPLE)
         cameras = sorted(nvm.cameras, key=lambda c: c.framenumber)
@@ -229,8 +120,7 @@ class AbstractDatasetSfmTestMixin(object):
                 p = position(view.time).ravel()
                 nt.assert_almost_equal(p, view.position, decimal=2)
                 num_tried += 1
-        self.assertGreater(num_tried, 0)
-
+        self.assertGreater(num_tried, 10)
 
     def test_orientations(self):
         num_tried = 0
@@ -243,17 +133,18 @@ class AbstractDatasetSfmTestMixin(object):
                     q = -q
                 nt.assert_almost_equal(q.components, vq.components, decimal=1)
                 num_tried += 1
-        self.assertGreater(num_tried, 0)
+        self.assertGreater(num_tried, 10)
 
 
-    def test_projection(self):
-        max_mean_reproj_error = 30.0 # Pixels
+    def notest_projection(self):
+        max_mean_reproj_error = 15.0 # Pixels
         num_test = min(500, len(self.ds.landmarks))
         chosen_landmarks = [self.ds.landmarks[i] for i in np.random.choice(len(self.ds.landmarks), num_test)]
         corresp_landmarks = [self.sfm.landmarks[lm.id] for lm in chosen_landmarks]
         distance_list = []
         for ds_lm, sfm_lm in zip(chosen_landmarks, corresp_landmarks):
             self.assertEqual(ds_lm.id, sfm_lm.id)
+            nt.assert_equal(ds_lm.position, sfm_lm.position)
             X = ds_lm.position.reshape(3,1)
             for bound_id in ds_lm.visibility:
                 ta, tb = self.ds._landmark_bounds[bound_id:bound_id+2]
@@ -261,11 +152,14 @@ class AbstractDatasetSfmTestMixin(object):
                 self.assertEqual(len(matching_views), 1)
                 view = matching_views[0]
                 t = view.time
-                y_expected = ds_lm.observations[view.id].reshape(2,1)
+                y_expected = sfm_lm.observations[view.id].reshape(2,1)
                 if self.ds.trajectory.startTime <= t <= self.ds.trajectory.endTime:
                     q = self.ds.trajectory.rotation(t)
                     R = q.toMatrix()
                     p = self.ds.trajectory.position(t).reshape(3,1)
+                    nt.assert_almost_equal(p, view.position.reshape(3,1), decimal=1)
+                    qtest = q if q.dot(view.orientation) > 0 else -q
+                    nt.assert_almost_equal(qtest.components, view.orientation.components, decimal=1)
                     X_view = np.dot(R, X - p)
                     self.assertEqual(X_view.shape, (3,1))
                     y = np.dot(self.CAMERA_MATRIX, X_view)
@@ -275,12 +169,46 @@ class AbstractDatasetSfmTestMixin(object):
                     distance = np.linalg.norm(y - y_expected)
                     distance_list.append(distance)
                     #self.assertLess(distance, max_reproj_error)
-        #import matplotlib.pyplot as plt
-        #plt.hist(distance_list)
-        #plt.title(self.__class__.__name__)
-        #plt.show()
+        import matplotlib.pyplot as plt
+        plt.hist(distance_list, bins=np.linspace(0,70))
+        plt.title(self.__class__.__name__)
+        plt.show()
         self.assertLess(np.mean(distance_list), max_mean_reproj_error)
 
+    def notest_plot_trajectory(self):
+        view_pos = np.vstack([v.position for v in self.sfm.views]).T
+        view_times = np.array([v.time for v in self.sfm.views])
+        assert view_pos.shape[0] == 3 and view_pos.ndim == 2
+        view_q = QuaternionArray([v.orientation for v in self.sfm.views])
+        view_q = view_q.unflipped()
+
+        t = view_times #np.linspace(self.ds.trajectory.startTime, self.ds.trajectory.endTime,
+                       # num=2000)
+        traj_pos = self.ds.trajectory.position(t)
+        traj_q = self.ds.trajectory.rotation(t)
+
+        import matplotlib.pyplot as plt
+        plt.figure()
+        for i in range(3):
+            plt.subplot(3,1,1+i)
+            plt.plot(view_times, view_pos[i], label='views')
+            plt.plot(t, traj_pos[i], label='trajectory')
+        plt.suptitle(self.__class__.__name__)
+        plt.legend()
+
+        plt.figure()
+        for i in range(4):
+            plt.subplot(5,1,1+i)
+            plt.plot(view_times, view_q.array[:, i], label='views')
+            plt.plot(t, traj_q.array[:, i], label='trajectory')
+        dq = view_q.conjugate * traj_q
+        angles = [q.toAxisAngle()[1] for q in dq]
+        plt.subplot(5,1,5)
+        plt.plot(t, np.rad2deg(angles))
+        plt.ylabel('degrees of error')
+        plt.suptitle(self.__class__.__name__)
+        plt.legend()
+        plt.show()
 
 
 class DatasetFromNvmTests(AbstractDatasetSfmTestMixin, unittest.TestCase):
@@ -293,11 +221,22 @@ class DatasetFromNvmTests(AbstractDatasetSfmTestMixin, unittest.TestCase):
         self.sfm = NvmLoader.from_file(NVM_EXAMPLE, CAMERA_FPS)
         self.load_dataset()
 
-class DatasetBuilderTests(unittest.TestCase):
+
+class DatasetFromOpenMvgTests(AbstractDatasetSfmTestMixin, unittest.TestCase):
+    CAMERA_MATRIX = np.array(
+            [[ 862.43356025,    0.        ,  987.89341878],
+       [   0.        ,  862.43356025,  525.14469927],
+       [   0.        ,    0.        ,    1.        ]])
+
+    def setUp(self):
+        self.sfm = OpenMvgResult.from_file(OPENMVG_EXAMPLE, CAMERA_FPS)
+        self.load_dataset()
+
+class DatasetBuilderGeneralTests(unittest.TestCase):
     def test_source_types(self):
-        valid = ('nvm', 'imu', 'openmvg')
-        landmark_valid = ('nvm', 'openmvg')
-        invalid = ('gyro', 'acc', 'bacon')
+        valid = ('imu', 'sfm')
+        landmark_valid = ('sfm', )
+        invalid = ('gyro', 'acc', 'bacon', 'openmvg', 'nvm')
         db = DatasetBuilder()
         for s in valid:
             db.set_orientation_source(s)
@@ -316,99 +255,40 @@ class DatasetBuilderTests(unittest.TestCase):
 
     def test_missing_source_fail(self):
         db = DatasetBuilder()
-        nvm = NvmModel.from_file(NVM_EXAMPLE)
-        db.add_source_nvm(nvm)
+        sfm = NvmLoader.from_file(NVM_EXAMPLE, camera_fps=30.)
+        db.add_source_sfm(sfm)
         with self.assertRaises(DatasetError):
             db.build()
-        db.set_position_source('nvm')
+        db.set_position_source('sfm')
         with self.assertRaises(DatasetError):
             db.build()
-        db.set_orientation_source('nvm')
+        db.set_orientation_source('sfm')
         with self.assertRaises(DatasetError):
             db.build()
-        db.set_landmark_source('nvm')
+        db.set_landmark_source('sfm')
         db.build() # all sources selected: OK
 
     def test_selected_sources(self):
         db = DatasetBuilder()
-        db.set_landmark_source('nvm')
+        db.set_landmark_source('sfm')
         db.set_position_source('imu')
         db.set_orientation_source('imu')
 
         expected = {
             'orientation' : 'imu',
             'position' : 'imu',
-            'landmark' : 'nvm'
+            'landmark' : 'sfm'
         }
 
         self.assertEqual(db.selected_sources, expected)
 
-    def test_add_nvm_twice_fail(self):
+    def test_add_sfm_twice_fail(self):
         db = DatasetBuilder()
-        nvm1 = NvmModel()
-        nvm2 = NvmModel()
-        db.add_source_nvm(nvm1)
+        sfm1 = SfmResult()
+        sfm2 = SfmResult()
+        db.add_source_sfm(sfm1)
         with self.assertRaises(DatasetError):
-            db.add_source_nvm(nvm2)
-
-    def test_nvm_full(self):
-        db = DatasetBuilder()
-        nvm = NvmModel.from_file(NVM_EXAMPLE)
-        camera_fps = 30.0
-        db.add_source_nvm(nvm, camera_fps=camera_fps)
-        db.set_orientation_source('nvm')
-        db.set_position_source('nvm')
-        db.set_landmark_source('nvm')
-        ds = db.build()
-
-        cameras = sorted(nvm.cameras, key=lambda c: c.framenumber)
-        for camera in cameras:
-            t = camera.framenumber / camera_fps
-            ds_pos = ds.trajectory.position(t).flatten()
-            if np.all(np.isnan(ds_pos)):
-                continue
-            nt.assert_almost_equal(ds_pos, camera.position, decimal=2)
-
-            ds_rot = ds.trajectory.rotation(t)
-            cam_rot = camera.orientation
-            i = np.argmax(np.abs(unpack_quat(cam_rot)))
-            ds_rot *= np.sign(unpack_quat(ds_rot)[i])
-            cam_rot *= np.sign(unpack_quat(cam_rot)[i])
-            nt.assert_almost_equal(unpack_quat(ds_rot), unpack_quat(cam_rot), decimal=1)
-
-        # Assume landmark order intact
-        self.assertEqual(len(ds.landmarks), len(nvm.points))
-        for nvm_p, ds_p in zip(nvm.points, ds.landmarks):
-            nt.assert_equal(nvm_p.position, ds_p.position)
-
-    def test_openmvg_full(self):
-        db = DatasetBuilder()
-        sfm_data = SfMData.from_json(OPENMVG_EXAMPLE)
-        camera_fps = 30.0
-        db.add_source_openmvg(sfm_data, camera_fps=camera_fps)
-        db.set_orientation_source('openmvg')
-        db.set_position_source('openmvg')
-        db.set_landmark_source('openmvg')
-        ds = db.build()
-
-        views = sorted(sfm_data.views, key=lambda v: v.framenumber)
-        for view in views:
-            t = view.framenumber / camera_fps
-            ds_pos = ds.trajectory.position(t).flatten()
-            ds_rot = ds.trajectory.rotation(t)
-            if np.all(np.isnan(ds_pos)) or np.all(np.isnan(unpack_quat(ds_rot))):
-                continue
-            nt.assert_almost_equal(ds_pos, view.c, decimal=2)
-            cam_rot = Quaternion.fromMatrix(view.R.T)
-            i = np.argmax(np.abs(unpack_quat(cam_rot)))
-            ds_rot *= np.sign(unpack_quat(ds_rot)[i])
-            cam_rot *= np.sign(unpack_quat(cam_rot)[i])
-            nt.assert_almost_equal(unpack_quat(ds_rot), unpack_quat(cam_rot), decimal=1)
-
-        # Assume landmark order intact
-        self.assertEqual(len(ds.landmarks), len(sfm_data.structure))
-        for openmvg_s, ds_p in zip(sfm_data.structure, ds.landmarks):
-            nt.assert_equal(openmvg_s.point, ds_p.position)
+            db.add_source_sfm(sfm2)
 
     def test_add_gyro_shape(self):
         N = 100
@@ -444,14 +324,59 @@ class DatasetBuilderTests(unittest.TestCase):
         db.add_source_gyro(gdata, gtimes)
         self.assertEqual(len(db._gyro_quat), len(gtimes))
 
-    def test_nvm_gyro(self):
+    def test_gyro_uniform(self):
+        N = 1000
+        gyro_data = np.zeros((3, N))
+        gyro_times = np.random.uniform(0, 100, size=N)
+        gyro_times.sort()
+        db = DatasetBuilder()
+        with self.assertRaises(DatasetError):
+            db.add_source_gyro(gyro_data, gyro_times)
+
+class DatasetBuilderSfmMixin(object):
+    def test_sfm_aligned_imu_orientations(self):
         db = DatasetBuilder()
         camera_fps = 30.0
+        db.add_source_sfm(self.sfm)
         db.add_source_gyro(GYRO_EXAMPLE_DATA, GYRO_EXAMPLE_TIMES)
-        nvm = NvmModel.from_file(NVM_EXAMPLE, load_measurements=True)
-        db.add_source_nvm(nvm, camera_fps=camera_fps)
-        db.set_landmark_source('nvm')
-        db.set_position_source('nvm')
+        orientations_aligned, new_times = db._sfm_aligned_imu_orientations()
+        Q_aligned = QuaternionArray(orientations_aligned).unflipped()
+        for view in self.sfm.views:
+            qt = quaternion_array_interpolate(Q_aligned, new_times, view.time)
+            if qt.dot(view.orientation) < 0:
+                qt = -qt
+            nt.assert_almost_equal(qt.components, view.orientation.components, decimal=1)
+
+    def test_sfm_only(self):
+        db = DatasetBuilder()
+        db.add_source_sfm(self.sfm)
+        db.set_orientation_source('sfm')
+        db.set_position_source('sfm')
+        db.set_landmark_source('sfm')
+        ds = db.build()
+
+        for view in self.sfm.views:
+            t = view.time
+            if ds.trajectory.startTime <= t <= ds.trajectory.endTime:
+                p_ds = ds.trajectory.position(t).flatten()
+                q_ds = ds.trajectory.rotation(t)
+                nt.assert_almost_equal(p_ds, view.position, decimal=2)
+                q_sfm = view.orientation
+                if q_ds.dot(q_sfm) < 0:
+                    q_sfm *= -1
+                nt.assert_almost_equal(q_ds.components, q_sfm.components, decimal=1)
+
+        # Assume landmark order intact
+        self.assertEqual(len(ds.landmarks), len(self.sfm.landmarks))
+        for sfm_lm, ds_lm in zip(self.sfm.landmarks, ds.landmarks):
+            nt.assert_equal(sfm_lm.position, ds_lm.position)
+
+    def test_with_gyro(self):
+        db = DatasetBuilder()
+        db.add_source_gyro(GYRO_EXAMPLE_DATA, GYRO_EXAMPLE_TIMES)
+        db.add_source_sfm(self.sfm)
+        db.set_landmark_source('sfm')
+        db.set_position_source('sfm')
         db.set_orientation_source('imu')
         ds = db.build()
 
@@ -470,88 +395,33 @@ class DatasetBuilderTests(unittest.TestCase):
         self.assertLess(np.mean(rotvel_err), 0.01)
 
         # 2) Dataset orientations should match approximately with NVM cameras
-        for camera in nvm.cameras:
-            t = camera.framenumber / camera_fps
-            if not ds.trajectory.startTime <= t <= ds.trajectory.endTime:
-                continue
-            orientation_ds = ds.trajectory.rotation(t)
-            if orientation_ds.dot(camera.orientation) < 0:
-                orientation_ds = -orientation_ds
-            nt.assert_almost_equal(unpack_quat(orientation_ds),
-                                   unpack_quat(camera.orientation),
-                                   decimal=1)
+        for view in self.sfm.views:
+            t = view.time
+            if ds.trajectory.startTime <= t <= ds.trajectory.endTime:
+                orientation_ds = ds.trajectory.rotation(t)
+                if orientation_ds.dot(view.orientation) < 0:
+                    orientation_ds = -orientation_ds
+                nt.assert_almost_equal(orientation_ds.components,
+                                       view.orientation.components,
+                                       decimal=1)
 
-    def test_openmvg_gyro(self):
-        db = DatasetBuilder()
-        camera_fps = 30.0
-        db.add_source_gyro(GYRO_EXAMPLE_DATA, GYRO_EXAMPLE_TIMES)
-        sfm_data = SfMData.from_json(OPENMVG_EXAMPLE)
-        db.add_source_openmvg(sfm_data, camera_fps=camera_fps)
-        db.set_landmark_source('openmvg')
-        db.set_position_source('openmvg')
-        db.set_orientation_source('imu')
-        ds = db.build()
+class DatasetBuilderNvm(DatasetBuilderSfmMixin, unittest.TestCase):
+    def setUp(self):
+        self.sfm = NvmLoader.from_file(NVM_EXAMPLE, camera_fps=CAMERA_FPS)
 
-        # 1) Dataset rotational velocity should match gyro (almost)
-        t0 = max(GYRO_EXAMPLE_TIMES[0], ds.trajectory.startTime)
-        t1 = min(GYRO_EXAMPLE_TIMES[-1], ds.trajectory.endTime)
-        i0 = np.flatnonzero(GYRO_EXAMPLE_TIMES >= t0)[0]
-        t0 = GYRO_EXAMPLE_TIMES[i0]
-        i1 = np.flatnonzero(GYRO_EXAMPLE_TIMES <= t1)[-1]
-        t1 = GYRO_EXAMPLE_TIMES[i1]
-        gyro_part_data = GYRO_EXAMPLE_DATA[i0:i1+1]
-        gyro_part_times = GYRO_EXAMPLE_TIMES[i0:i1+1]
-        rotvel_ds_world = ds.trajectory.rotationalVelocity(gyro_part_times)
-        rotvel_ds = ds.trajectory.rotation(gyro_part_times).rotateFrame(rotvel_ds_world)
-        rotvel_err = rotvel_ds - gyro_part_data.T
-        self.assertLess(np.mean(rotvel_err), 0.01)
-
-        # 2) Dataset orientations should match approximately with OpenMVG cameras
-        for view in sfm_data.views:
-            t = view.framenumber / camera_fps
-            if not ds.trajectory.startTime <= t <= ds.trajectory.endTime:
-                continue
-            orientation_ds = ds.trajectory.rotation(t)
-            view_orientation = Quaternion.fromMatrix(view.R)
-            if orientation_ds.dot(view_orientation) < 0:
-                orientation_ds = -orientation_ds
-            nt.assert_almost_equal(unpack_quat(orientation_ds),
-                                   unpack_quat(view_orientation),
-                                   decimal=1)
-
-    def test_nvm_aligned_imu_orientations(self):
-        nvm = NvmModel.from_file(NVM_EXAMPLE)
-        db = DatasetBuilder()
-        camera_fps = 30.0
-        db.add_source_nvm(nvm, camera_fps=camera_fps)
-        db.add_source_gyro(GYRO_EXAMPLE_DATA, GYRO_EXAMPLE_TIMES)
-        orientations_aligned, new_times = db._nvm_aligned_imu_orientations()
-        Q_aligned = QuaternionArray(orientations_aligned).unflipped()
-        for camera in nvm.cameras:
-            t = camera.framenumber / camera_fps
-            qt = quaternion_array_interpolate(Q_aligned, new_times, t)
-            if qt.dot(camera.orientation) < 0:
-                qt = -qt
-            nt.assert_almost_equal(unpack_quat(qt), unpack_quat(camera.orientation), decimal=1)
-
-    def test_gyro_uniform(self):
-        N = 1000
-        gyro_data = np.zeros((3, N))
-        gyro_times = np.random.uniform(0, 100, size=N)
-        gyro_times.sort()
-        db = DatasetBuilder()
-        with self.assertRaises(DatasetError):
-            db.add_source_gyro(gyro_data, gyro_times)
+class DatasetBuilderOpenMvg(DatasetBuilderSfmMixin, unittest.TestCase):
+    def setUp(self):
+        self.sfm = OpenMvgResult.from_file(OPENMVG_EXAMPLE, CAMERA_FPS)
 
 class DatasetSaveTests(unittest.TestCase):
     def setUp(self):
         db = DatasetBuilder()
         db.add_source_gyro(GYRO_EXAMPLE_DATA, GYRO_EXAMPLE_TIMES)
-        nvm = NvmModel.from_file(NVM_EXAMPLE)
-        db.add_source_nvm(nvm, camera_fps=30.)
-        db.set_landmark_source('nvm')
+        sfm = NvmLoader.from_file(NVM_EXAMPLE, camera_fps=CAMERA_FPS)
+        db.add_source_sfm(sfm)
+        db.set_landmark_source('sfm')
         db.set_orientation_source('imu')
-        db.set_position_source('nvm')
+        db.set_position_source('sfm')
         self.ds = db.build()
 
         self.testdir = tempfile.mkdtemp()
