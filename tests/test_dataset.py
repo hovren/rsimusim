@@ -371,7 +371,30 @@ class DatasetBuilderSfmMixin(object):
         for sfm_lm, ds_lm in zip(self.sfm.landmarks, ds.landmarks):
             nt.assert_equal(sfm_lm.position, ds_lm.position)
 
-    def test_with_gyro(self):
+    def test_with_gyro_orientation(self):
+        db = DatasetBuilder()
+        db.add_source_gyro(GYRO_EXAMPLE_DATA, GYRO_EXAMPLE_TIMES)
+        db.add_source_sfm(self.sfm)
+        db.set_landmark_source('sfm')
+        db.set_position_source('sfm')
+        db.set_orientation_source('imu')
+        ds = db.build()
+
+        # 2) Dataset orientations should match approximately with NVM cameras
+        for view in self.sfm.views:
+            t = view.time
+            if ds.trajectory.startTime <= t <= ds.trajectory.endTime:
+                orientation_ds = ds.trajectory.rotation(t)
+                if orientation_ds.dot(view.orientation) < 0:
+                    orientation_ds = -orientation_ds
+                nt.assert_almost_equal(orientation_ds.components,
+                                       view.orientation.components,
+                                       decimal=1)
+
+    def notest_with_gyro_velocity(self):
+        # NOTE: Since the gyro orientations are transported into the
+        # SfM coordinate frame, comparing the gyro velocity is not
+        # so simple, so we deactivate this test for now
         db = DatasetBuilder()
         db.add_source_gyro(GYRO_EXAMPLE_DATA, GYRO_EXAMPLE_TIMES)
         db.add_source_sfm(self.sfm)
@@ -391,19 +414,30 @@ class DatasetBuilderSfmMixin(object):
         gyro_part_times = GYRO_EXAMPLE_TIMES[i0:i1+1]
         rotvel_ds_world = ds.trajectory.rotationalVelocity(gyro_part_times)
         rotvel_ds = ds.trajectory.rotation(gyro_part_times).rotateFrame(rotvel_ds_world)
-        rotvel_err = rotvel_ds - gyro_part_data.T
+        rotvel_err = np.linalg.norm(rotvel_ds - gyro_part_data.T, axis=1)
         self.assertLess(np.mean(rotvel_err), 0.01)
 
-        # 2) Dataset orientations should match approximately with NVM cameras
-        for view in self.sfm.views:
-            t = view.time
-            if ds.trajectory.startTime <= t <= ds.trajectory.endTime:
-                orientation_ds = ds.trajectory.rotation(t)
-                if orientation_ds.dot(view.orientation) < 0:
-                    orientation_ds = -orientation_ds
-                nt.assert_almost_equal(orientation_ds.components,
-                                       view.orientation.components,
-                                       decimal=1)
+        import matplotlib.pyplot as plt
+        fig1 = plt.figure()
+        for i in range(3):
+            plt.subplot(3,1,1+i)
+            plt.plot(gyro_part_times, gyro_part_data[:,i], label='gyro', linewidth=3)
+            plt.plot(gyro_part_times, rotvel_ds[i, :], label='ds')
+            plt.legend(loc='upper right')
+        plt.suptitle(self.__class__.__name__)
+        fig1.savefig('/tmp/{}_w.pdf'.format(self.__class__.__name__))
+        view_q = QuaternionArray([v.orientation for v in self.sfm.views])
+        view_q = view_q.unflipped()
+        view_times = [v.time for v in self.sfm.views]
+        traj_q = ds.trajectory.rotation(gyro_part_times)
+        fig2 = plt.figure()
+        for i in range(4):
+            plt.subplot(4,1,1+i)
+            plt.plot(view_times, view_q.array[:, i], '-o')
+            plt.plot(gyro_part_times, traj_q.array[:, i])
+        plt.suptitle(self.__class__.__name__)
+        fig2.savefig('/tmp/{}_q.pdf'.format(self.__class__.__name__))
+        plt.show()
 
 class DatasetBuilderNvm(DatasetBuilderSfmMixin, unittest.TestCase):
     def setUp(self):
