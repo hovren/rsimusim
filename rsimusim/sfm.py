@@ -61,7 +61,7 @@ class SfmResult(object):
             }
             lm.observations = remapped_observations
 
-    def add_landmark(self, position, visibility):
+    def add_landmark(self, position, visibility, color=None):
         for view_id in visibility:
             try:
                 view = self.views[view_id]
@@ -69,7 +69,7 @@ class SfmResult(object):
                 raise SfmResultError("No such view: {:d}".format(view_id))
         _id = self.next_landmark_id
         self.next_landmark_id += 1
-        lm = Landmark(_id, position, visibility)
+        lm = Landmark(_id, position, visibility, color=color)
         self.landmarks.append(lm)
         return _id
 
@@ -192,8 +192,8 @@ class VisualSfmResult(SfmResult):
 
 class OpenMvgResult(SfmResult):
     @classmethod
-    def from_file(cls, filename, camera_fps):
-        sfm_data = SfMData.from_json(filename)
+    def from_file(cls, filename, camera_fps, color=False):
+        sfm_data = SfMData.from_json(filename, color=color)
         instance = cls()
         view_remap = {}
         for omvg_view in sfm_data.views:
@@ -206,7 +206,7 @@ class OpenMvgResult(SfmResult):
         for s in sfm_data.structure:
             X = s.point
             observations = { view_remap[view_id] : xy for view_id, xy in s.observations.items()}
-            instance.add_landmark(X, observations)
+            instance.add_landmark(X, observations, color=s.color)
 
         # Rearrage views in ascending time order
         instance.remap_views()
