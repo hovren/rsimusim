@@ -62,6 +62,7 @@ class Dataset(object):
         self.trajectory = None
         self.landmarks = []
         self._landmark_bounds = None
+        self.name = None
 
     def position_from_sfm(self, sfm):
         view_times = np.array([v.time for v in sfm.views])
@@ -221,6 +222,7 @@ class Dataset(object):
             return TimeSeries(timestamps, data)
 
         with h5py.File(filepath, 'r') as h5f:
+            instance.name = h5f.attrs['name']
             instance._position_data = load_timeseries(h5f['position'])
             instance._orientation_data = load_timeseries(h5f['orientation'])
             instance._update_trajectory()

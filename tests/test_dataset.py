@@ -536,6 +536,7 @@ class DatasetSaveTests(unittest.TestCase):
             self.assertTrue('positions' in landmarks_group.keys())
             self.assertTrue('colors' in landmarks_group.keys())
             self.assertTrue('visibility' in landmarks_group.keys())
+            self.assertEqual(h5f.attrs['name'], dataset_name)
 
     def test_save_reload_multi(self):
         t = np.linspace(self.ds.trajectory.startTime, self.ds.trajectory.endTime, num=200)
@@ -556,6 +557,7 @@ class DatasetSaveTests(unittest.TestCase):
 
             # Load it again, check that it is the same
             ds = Dataset.from_file(outfilename)
+            self.assertEqual(ds.name, dataset_name)
             positions = ds.trajectory.position(t)
             rotations = ds.trajectory.rotation(t)
             nt.assert_equal(positions, original_positions)
