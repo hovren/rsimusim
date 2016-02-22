@@ -1,4 +1,6 @@
 from collections import namedtuple
+import multiprocessing
+import logging
 
 import numpy as np
 import scipy.optimize
@@ -7,6 +9,9 @@ from imusim.platforms.base import Platform, Component
 from imusim.platforms.timers import IdealTimer
 from imusim.utilities.time_series import TimeSeries
 
+USE_MULTIPROC = True
+
+logger = logging.getLogger()
 
 class PinholeModel(object):
     def __init__(self, K, size, readout, frame_rate):
@@ -29,22 +34,92 @@ class PinholeModel(object):
         y /= y[2]
         return y[:2]
 
+    def unproject(self, image_points):
+        xh = np.ones((3, image_points.shape[1]))
+        xh[:2] = image_points
+        Y = np.dot(np.linalg.inv(self.K), xh)
+        Y /= Y[2]
+        return Y
+
 class CameraPlatform(Platform):
     def __init__(self, camera_model, simulation=None, trajectory=None):
         self.timer = IdealTimer(self)
         self.camera = Camera(camera_model, self)
-
         Platform.__init__(self, simulation, trajectory)
 
     @property
     def components(self):
         return [self.timer, self.camera]
 
+def _project_point_rs(X, t0, camera_model, trajectory):
+        t_min = t0
+        t_max = t0 + camera_model.readout
+        readout_delta = camera_model.readout / camera_model.rows
+        Xh = np.ones((4, 1))
+        Xh[:3] = X.reshape(3,1)
+
+        def point_and_time(t):
+            pos = trajectory.position(t)
+            orientation = trajectory.rotation(t)
+            R = orientation.toMatrix()
+            P = np.hstack((R.T, np.dot(R.T, -pos)))
+            PX = np.dot(P, Xh)
+            y = camera_model.project(PX)
+            t_p = float(y[1]) * readout_delta + t_min
+            return y, t_p
+
+        opt_func = lambda t: np.abs(point_and_time(t)[1] - t)
+        t = scipy.optimize.fminbound(opt_func, t_min, t_max)
+        y, t = point_and_time(t)
+        return y, t
+
+def projection_worker(camera_model, trajectory, inq, outq):
+    logger.debug("Worker process started")
+    while True:
+        object = inq.get()
+        if object is None:
+            inq.put(object)
+            break # Stop processing
+        lm_id, lm_pos, t = object
+        image_point, _ = _project_point_rs(lm_pos, t, camera_model, trajectory)
+        outq.put((lm_id, image_point))
+    logger.debug("Worker process quit normally")
+
 class Camera(Component):
     def __init__(self, camera_model, platform):
         self.current_frame = 0
         self.camera_model = camera_model
+
+        if USE_MULTIPROC:
+            self.inq = multiprocessing.Queue()
+            self.outq = multiprocessing.Queue()
+            self.procs = []
+
         super(Camera, self).__init__(platform)
+
+    def __del__(self):
+        if USE_MULTIPROC:
+            self.stop_multiproc()
+
+    def start_multiproc(self):
+        if not USE_MULTIPROC:
+            raise RuntimeError("Multiprocessing is turned off in code")
+        self.procs = [multiprocessing.Process(target=projection_worker, args=(self.camera_model, self.platform.trajectory, self.inq, self.outq))
+                          for _ in range(multiprocessing.cpu_count())]
+        for proc in self.procs:
+            proc.start()
+        logger.info('Started %d worker processes', len(self.procs))
+
+    def stop_multiproc(self, kill=False):
+        logger.debug("Signalling worker processes to stop")
+        self.inq.put(None) # Signal done
+        for proc in self.procs:
+            if kill:
+                proc.terminate()
+            else:
+                proc.join()
+        logger.debug("All worker processes has quit")
+
 
     @property
     def frame_rate(self):
@@ -58,36 +133,29 @@ class Camera(Component):
         orientation = self.platform.trajectory.rotation(t)
 
         landmarks = environment.observe(t, pos, orientation)
-        image_observations = {}
-        for lm in landmarks:
-            image_point, point_t = self.project_point_rs(lm.position, t)
-            x, y = image_point
-            if 0 <= x < self.camera_model.columns and 0 <= y < self.camera_model.rows:
-                image_observations[lm.id] = image_point
+        if USE_MULTIPROC:
+            if not self.procs:
+                self.start_multiproc()
+            image_observation_list = []
+            for lm in landmarks:
+                self.inq.put((lm.id, lm.position, t))
+
+            not_seen = set([lm.id for lm in landmarks])
+            while not_seen:
+                lm_id, im_pt = self.outq.get()
+                image_observation_list.append((lm_id, im_pt))
+                not_seen.remove(lm_id)
+
+        else:
+            image_observation_list = [(lm.id, self.project_point_rs(lm.position, t)[0]) for lm in landmarks]
+        image_observations = {lm_id : image_point for lm_id, image_point in image_observation_list
+                              if 0 <= image_point[0] <= self.camera_model.columns \
+                                and 0 <= image_point[1] < self.camera_model.rows}
 
         return framenum, t, image_observations
 
     def project_point_rs(self, X, t0):
-        t_min = t0
-        t_max = t0 + self.camera_model.readout
-        readout_delta = self.camera_model.readout / self.camera_model.rows
-        Xh = np.ones((4, 1))
-        Xh[:3] = X.reshape(3,1)
-        
-        def point_and_time(t):
-            pos = self.platform.trajectory.position(t)
-            orientation = self.platform.trajectory.rotation(t)
-            R = orientation.toMatrix()
-            P = np.hstack((R.T, np.dot(R.T, -pos)))
-            PX = np.dot(P, Xh)
-            y = self.camera_model.project(PX)
-            t_p = float(y[1]) * readout_delta + t_min
-            return y, t_p
-
-        opt_func = lambda t: np.abs(point_and_time(t)[1] - t)
-        t = scipy.optimize.fminbound(opt_func, t_min, t_max)
-        y, t = point_and_time(t)
-        return y, t
+        return _project_point_rs(X, t0, self.camera_model, self.platform.trajectory)
 
 class BasicCameraBehaviour(object):
     def __init__(self, camera_platform):
