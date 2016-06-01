@@ -51,7 +51,34 @@ class CameraPlatform(Platform):
     def components(self):
         return [self.timer, self.camera]
 
+def project_at_time(t, X, trajectory, camera_model):
+    R = np.array(trajectory.rotation(t).toMatrix())
+    p = trajectory.position(t)
+    #T = np.hstack((R.T, np.dot(R.T, -p)))
+    T = np.hstack((R, np.dot(R, -p)))
+    Xh = np.ones((4,1))
+    Xh[:3] = X.reshape(3,1)
+    X_camera = np.dot(T, Xh)
+    y = camera_model.project(X_camera)
+    return y, X_camera
+
 def _project_point_rs(X, t0, camera_model, trajectory):
+    def root_func(r):
+        t = t0 + r * camera_model.readout / camera_model.rows
+        (u, v), X_camera = project_at_time(t, X, trajectory, camera_model)
+        if X_camera[2] < 0:
+            print("Behind camera", X.ravel())
+        return v - r
+
+    try:
+        v = scipy.optimize.brentq(root_func, 0, camera_model.rows, xtol=0.5)
+    except ValueError:
+        return None, None
+    vt = t0 + v * camera_model.readout / camera_model.rows
+    y, _ = project_at_time(vt, X, trajectory, camera_model)
+    return y, vt
+
+def _project_point_rs_old(X, t0, camera_model, trajectory):
         t_min = t0
         t_max = t0 + camera_model.readout
         readout_delta = camera_model.readout / camera_model.rows
@@ -64,6 +91,7 @@ def _project_point_rs(X, t0, camera_model, trajectory):
             R = orientation.toMatrix()
             P = np.hstack((R.T, np.dot(R.T, -pos)))
             PX = np.dot(P, Xh)
+            assert PX[2] > 0, "Point behind camera: {}".format(PX.ravel())
             y = camera_model.project(PX)
             t_p = float(y[1]) * readout_delta + t_min
             return y, t_p
@@ -143,7 +171,8 @@ class Camera(Component):
             not_seen = set([lm.id for lm in landmarks])
             while not_seen:
                 lm_id, im_pt = self.outq.get()
-                image_observation_list.append((lm_id, im_pt))
+                if im_pt is not None:
+                    image_observation_list.append((lm_id, im_pt))
                 not_seen.remove(lm_id)
 
         else:
