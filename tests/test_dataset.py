@@ -132,7 +132,7 @@ class AbstractDatasetSfmTestMixin(object):
         self.assertGreater(num_tried, 10)
 
 
-    def notest_projection(self):
+    def test_projection(self):
         max_mean_reproj_error = 15.0 # Pixels
         num_test = min(500, len(self.ds.landmarks))
         chosen_landmarks = [self.ds.landmarks[i] for i in np.random.choice(len(self.ds.landmarks), num_test)]
@@ -156,6 +156,7 @@ class AbstractDatasetSfmTestMixin(object):
                     nt.assert_almost_equal(p, view.position.reshape(3,1), decimal=1)
                     qtest = q if q.dot(view.orientation) > 0 else -q
                     nt.assert_almost_equal(qtest.components, view.orientation.components, decimal=1)
+                    
                     X_view = np.dot(R, X - p)
                     self.assertEqual(X_view.shape, (3,1))
                     y = np.dot(self.CAMERA_MATRIX, X_view)
@@ -167,7 +168,7 @@ class AbstractDatasetSfmTestMixin(object):
                     #self.assertLess(distance, max_reproj_error)
         import matplotlib.pyplot as plt
         plt.hist(distance_list, bins=np.linspace(0,70))
-        plt.title(self.__class__.__name__)
+        plt.title('Reproj distribution: {}'.format(self.__class__.__name__))
         plt.show()
         self.assertLess(np.mean(distance_list), max_mean_reproj_error)
 
@@ -387,7 +388,7 @@ class DatasetBuilderSfmMixin(object):
                                        view.orientation.components,
                                        decimal=1)
 
-    def notest_with_gyro_velocity(self):
+    def test_with_gyro_velocity(self):
         # NOTE: Since the gyro orientations are transported into the
         # SfM coordinate frame, comparing the gyro velocity is not
         # so simple, so we deactivate this test for now
@@ -411,7 +412,7 @@ class DatasetBuilderSfmMixin(object):
         rotvel_ds_world = ds.trajectory.rotationalVelocity(gyro_part_times)
         rotvel_ds = ds.trajectory.rotation(gyro_part_times).rotateFrame(rotvel_ds_world)
         rotvel_err = np.linalg.norm(rotvel_ds - gyro_part_data.T, axis=1)
-        self.assertLess(np.mean(rotvel_err), 0.01)
+        
 
         import matplotlib.pyplot as plt
         fig1 = plt.figure()
@@ -420,7 +421,7 @@ class DatasetBuilderSfmMixin(object):
             plt.plot(gyro_part_times, gyro_part_data[:,i], label='gyro', linewidth=3)
             plt.plot(gyro_part_times, rotvel_ds[i, :], label='ds')
             plt.legend(loc='upper right')
-        plt.suptitle(self.__class__.__name__)
+        plt.suptitle('Rotational velocity: ' + self.__class__.__name__)
         fig1.savefig('/tmp/{}_w.pdf'.format(self.__class__.__name__))
         view_q = QuaternionArray([v.orientation for v in self.sfm.views])
         view_q = view_q.unflipped()
@@ -431,9 +432,10 @@ class DatasetBuilderSfmMixin(object):
             plt.subplot(4,1,1+i)
             plt.plot(view_times, view_q.array[:, i], '-o')
             plt.plot(gyro_part_times, traj_q.array[:, i])
-        plt.suptitle(self.__class__.__name__)
+        plt.suptitle('Quaternion: ' + self.__class__.__name__)
         fig2.savefig('/tmp/{}_q.pdf'.format(self.__class__.__name__))
         plt.show()
+        self.assertLess(np.mean(rotvel_err), 0.01)
 
     def test_rescale(self):
         db = DatasetBuilder()
