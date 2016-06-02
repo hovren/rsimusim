@@ -52,7 +52,8 @@ class LoaderTestsMixin(object):
             view = self.sfm.views[v_id]
             self.assertEqual(view.id, v_id)
             nt.assert_almost_equal(view.position, pos)
-            dq = view.orientation - rot
+            # Orientation is conjugated due to different coordinate frames
+            dq = view.orientation.conjugate - rot
             self.assertAlmostEqual(dq.magnitude, 0, places=5)
 
     def test_view_time_order(self):
@@ -73,9 +74,9 @@ class LoaderTestsMixin(object):
             X = np.array(pos).reshape(3,1)
             for view_id, measurement in remapped_obs.items():
                 view = self.sfm.views[view_id]
-                R = view.orientation.toMatrix()
-                p = view.position.reshape(3,1)
-                y_proj = np.dot(self.CAMERA_MATRIX, np.dot(R, X - p))
+                Rws = view.orientation.toMatrix()
+                pws = view.position.reshape(3,1)
+                y_proj = np.dot(self.CAMERA_MATRIX, np.dot(Rws.T, X - pws))
                 y_proj = y_proj[:2] / y_proj[2,0]
                 y_proj = y_proj.reshape(2,1)
                 y_expected = np.array(measurement).reshape(2,1)
@@ -88,9 +89,9 @@ class LoaderTestsMixin(object):
             X = lm.position.reshape(3,1)
             for view_id, measurement in lm.observations.items():
                 view = self.sfm.views[view_id]
-                R = view.orientation.toMatrix()
-                p = view.position.reshape(3,1)
-                y_proj = np.dot(self.CAMERA_MATRIX, np.dot(R, X - p))
+                Rws = view.orientation.toMatrix()
+                pws = view.position.reshape(3,1)
+                y_proj = np.dot(self.CAMERA_MATRIX, np.dot(Rws.T, X - pws))
                 y_proj = y_proj[:2] / y_proj[2,0]
                 y_proj = y_proj.reshape(2,1)
                 y_expected = np.array(measurement).reshape(2,1)

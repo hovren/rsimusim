@@ -326,19 +326,11 @@ class DatasetBuilder(object):
                 self._position_source is not None
 
     def _sfm_aligned_imu_orientations(self):
-        # Note: The integration method used defines rotations inversely from
-        # what the SfM coordinate frame thinks.
-        # E.g. after integrating the gyroscope measurements to a R_g(t) sequence
-        # We have X_camera(t) = R_g(t)^T X_world
-        # While for SfM (which is our canonical coordinate frame)
-        # we have X_camera(t) = R_sfm(t) X_world
-        # Because of this, both the initial reference rotation, and the final
-        # rotation sequence must be conjugated.
         view_times = np.array([v.time for v in self._sfm.views])
         view_idx = np.flatnonzero(view_times >= self._gyro_times[0])[0]
         view = self._sfm.views[view_idx]
         t_ref = view.time
-        q_ref = view.orientation.conjugate # View to gyro frame
+        q_ref = view.orientation
         gstart_idx = np.argmin(np.abs(self._gyro_times - t_ref))
         q_initial = np.array(q_ref.components)
         gyro_part = self._gyro_data[gstart_idx:]
@@ -346,8 +338,6 @@ class DatasetBuilder(object):
         dt = float(gyro_part_times[1] - gyro_part_times[0])
         gyro_part = gyro_part
         q = crisp.fastintegrate.integrate_gyro_quaternion_uniform(gyro_part, dt, initial=q_initial)
-        # Conjugation of interpolated data
-        q *= np.array([1, -1, -1, -1]).reshape(1,4)
         return q, gyro_part_times
 
 

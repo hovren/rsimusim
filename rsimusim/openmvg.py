@@ -90,7 +90,9 @@ class SfMData(object):
     def project_point_view(self, p, view):
         intr = view.intrinsic
         K = intr.camera_matrix
-        p_view = np.dot(view.R, (p - view.c))
+        p_view = np.dot(view.R.T, (p - view.c)) # T = [R|p] gives X_world = T X_body
+        assert p_view.size == 3
+        #assert p_view[2] >= 0, "Got p={}".format(p_view)
         im_pt = np.dot(K, p_view)
         return im_pt[:2] / im_pt[2]
 
@@ -120,7 +122,10 @@ class SfMData(object):
             filename = vdata['filename']
             p_id = vdata['id_pose']
             R, c = poses[p_id]
-            view = View(v_id, filename, intr, R, c)
+            Rws = R.T
+            pws = c
+            #view = View(v_id, filename, intr, R, c)
+            view = View(v_id, filename, intr, Rws, pws)
             return view
         return [parse_view(d) for d in views_data]
 
@@ -131,6 +136,9 @@ class SfMData(object):
             pdata = d['value']
             R = np.array(pdata['rotation'])
             c = np.array(pdata['center'])
+            Rws = R.T
+            pws = c
+            #return p_id, Rws, pws
             return p_id, R, c
         return {p_id : (R, c) for p_id, R, c in (parse_pose(d) for d in poses_data)}
 

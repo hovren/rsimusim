@@ -52,7 +52,7 @@ class OpenMVGSfMDataTests(unittest.TestCase):
         v143 = sfm_data.views[143]
         self.assertEqual(v143.id, 143)
         R143, c143 = POSE_143
-        nt.assert_equal(v143.R, R143)
+        nt.assert_equal(v143.R.T, R143) # Conjugation due to coordinate transforms
         nt.assert_equal(v143.c, c143)
         self.assertEqual(v143.filename, 'frame_0779.jpg')
         self.assertEqual(v143.framenumber, 779)
@@ -79,10 +79,10 @@ class OpenMVGSfMDataTests(unittest.TestCase):
                 error = np.linalg.norm(p - image_point)
                 error_list.append(error)
                 self.assertLessEqual(error, tolerance)
-        """import matplotlib.pyplot as plt
+        import matplotlib.pyplot as plt
         plt.hist(error_list)
         plt.title("OpenMVG reproj.test, mean={:.1f} std={:.1f}".format(np.mean(error_list), np.std(error_list)))
-        plt.show()"""
+        plt.show()
 
     def test_rescale(self):
         sfm_data = self.sfm_data

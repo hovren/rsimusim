@@ -151,13 +151,17 @@ class AbstractDatasetSfmTestMixin(object):
                 y_expected = sfm_lm.observations[view.id].reshape(2,1)
                 if self.ds.trajectory.startTime <= t <= self.ds.trajectory.endTime:
                     q = self.ds.trajectory.rotation(t)
-                    R = q.toMatrix()
-                    p = self.ds.trajectory.position(t).reshape(3,1)
-                    nt.assert_almost_equal(p, view.position.reshape(3,1), decimal=1)
+                    Rws = q.toMatrix()
+                    #from scipy.linalg import logm
+                    #dR = np.dot(Rws.T, view.orientation.toMatrix())
+                    #print(np.rad2deg(np.linalg.norm(logm(dR), 'fro')/np.sqrt(2)))
+                    pws = self.ds.trajectory.position(t).reshape(3,1)
+                    nt.assert_almost_equal(pws, view.position.reshape(3,1), decimal=1)
                     qtest = q if q.dot(view.orientation) > 0 else -q
                     nt.assert_almost_equal(qtest.components, view.orientation.components, decimal=1)
                     
-                    X_view = np.dot(R, X - p)
+                    X_view = np.dot(Rws.T, X - pws)
+                    #self.assertGreaterEqual(X_view[2], 0)
                     self.assertEqual(X_view.shape, (3,1))
                     y = np.dot(self.CAMERA_MATRIX, X_view)
                     self.assertEqual(y.size, 3)
@@ -172,7 +176,7 @@ class AbstractDatasetSfmTestMixin(object):
         plt.show()
         self.assertLess(np.mean(distance_list), max_mean_reproj_error)
 
-    def notest_plot_trajectory(self):
+    def test_plot_trajectory(self):
         view_pos = np.vstack([v.position for v in self.sfm.views]).T
         view_times = np.array([v.time for v in self.sfm.views])
         assert view_pos.shape[0] == 3 and view_pos.ndim == 2
@@ -411,16 +415,18 @@ class DatasetBuilderSfmMixin(object):
         gyro_part_times = GYRO_EXAMPLE_TIMES[i0:i1+1]
         rotvel_ds_world = ds.trajectory.rotationalVelocity(gyro_part_times)
         rotvel_ds = ds.trajectory.rotation(gyro_part_times).rotateFrame(rotvel_ds_world)
-        rotvel_err = np.linalg.norm(rotvel_ds - gyro_part_data.T, axis=1)
+        rotvel_err = np.linalg.norm(rotvel_ds - gyro_part_data.T, axis=0)
         
 
         import matplotlib.pyplot as plt
         fig1 = plt.figure()
         for i in range(3):
-            plt.subplot(3,1,1+i)
+            plt.subplot(4,1,1+i)
             plt.plot(gyro_part_times, gyro_part_data[:,i], label='gyro', linewidth=3)
             plt.plot(gyro_part_times, rotvel_ds[i, :], label='ds')
             plt.legend(loc='upper right')
+        plt.subplot(4,1,4)
+        plt.plot(gyro_part_times, rotvel_err)
         plt.suptitle('Rotational velocity: ' + self.__class__.__name__)
         fig1.savefig('/tmp/{}_w.pdf'.format(self.__class__.__name__))
         view_q = QuaternionArray([v.orientation for v in self.sfm.views])

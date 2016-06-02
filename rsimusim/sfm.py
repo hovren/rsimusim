@@ -126,7 +126,7 @@ class VisualSfmResult(SfmResult):
                 focal, qw, qx, qy, qz, px, py, pz, radial, _ = params
                 filename = ''.join(tokens[:-10])
                 filename = os.path.split(filename)[-1]
-                q = Quaternion(qw, qx, qy, qz)
+                q = Quaternion(qw, qx, qy, qz).conjugate # Change coordinate frame
                 q.normalise()
                 if not np.isclose(q.magnitude, 1.0):
                     raise SfmResultError("{} had norm {}".format(q, q.magnitude))
