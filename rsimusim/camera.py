@@ -78,29 +78,6 @@ def _project_point_rs(X, t0, camera_model, trajectory):
     y, _ = project_at_time(vt, X, trajectory, camera_model)
     return y, vt
 
-def _project_point_rs_old(X, t0, camera_model, trajectory):
-        t_min = t0
-        t_max = t0 + camera_model.readout
-        readout_delta = camera_model.readout / camera_model.rows
-        Xh = np.ones((4, 1))
-        Xh[:3] = X.reshape(3,1)
-
-        def point_and_time(t):
-            pos = trajectory.position(t)
-            orientation = trajectory.rotation(t)
-            R = orientation.toMatrix()
-            P = np.hstack((R.T, np.dot(R.T, -pos)))
-            PX = np.dot(P, Xh)
-            assert PX[2] > 0, "Point behind camera: {}".format(PX.ravel())
-            y = camera_model.project(PX)
-            t_p = float(y[1]) * readout_delta + t_min
-            return y, t_p
-
-        opt_func = lambda t: np.abs(point_and_time(t)[1] - t)
-        t = scipy.optimize.fminbound(opt_func, t_min, t_max)
-        y, t = point_and_time(t)
-        return y, t
-
 def projection_worker(camera_model, trajectory, inq, outq):
     logger.debug("Worker process started")
     while True:
