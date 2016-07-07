@@ -52,10 +52,10 @@ class CameraPlatform(Platform):
         return [self.timer, self.camera]
 
 def project_at_time(t, X, trajectory, camera_model):
-    R = np.array(trajectory.rotation(t).toMatrix())
-    p = trajectory.position(t)
+    Rws = np.array(trajectory.rotation(t).toMatrix())
+    pws = trajectory.position(t)
     #T = np.hstack((R.T, np.dot(R.T, -p)))
-    T = np.hstack((R, np.dot(R, -p)))
+    T = np.hstack((Rws.T, np.dot(Rws.T, -pws)))
     Xh = np.ones((4,1))
     Xh[:3] = X.reshape(3,1)
     X_camera = np.dot(T, Xh)
@@ -132,9 +132,11 @@ class Camera(Component):
     def start_multiproc(self):
         if not USE_MULTIPROC:
             raise RuntimeError("Multiprocessing is turned off in code")
-        self.procs = [multiprocessing.Process(target=projection_worker, args=(self.camera_model, self.platform.trajectory, self.inq, self.outq))
+        self.procs = [multiprocessing.Process(target=projection_worker,
+                                              args=(self.camera_model, self.platform.trajectory, self.inq, self.outq))
                           for _ in range(multiprocessing.cpu_count())]
         for proc in self.procs:
+            proc.daemon = True # Kill process on parent exit
             proc.start()
         logger.info('Started %d worker processes', len(self.procs))
 

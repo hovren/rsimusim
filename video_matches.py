@@ -5,13 +5,18 @@ from collections import deque
 import os
 import struct
 import logging
+import shutil
 import itertools
 import crisp.tracking
 logging.basicConfig(level=logging.DEBUG)
 
 import numpy as np
 import cv2
-from crisp import VideoStream, AtanCameraModel
+import crisp.rotations
+from crisp import VideoStream, AtanCameraModel, GyroStream
+from stabby import rectify, rectification_map
+
+from rsimusim.misc import CalibratedGyroStream
 
 class Track(object):
     _next_id = 0
@@ -84,9 +89,27 @@ class FrameStore(object):
         for i, frame in enumerate(self._frames):
             yield self._last_framenum - len(self._frames) + i + 1, frame
 
+class RectificationStrategy(object):
+    NONE = 0
+    POINTS = 1
+    FRAMES = 2
+
 class VideoTracker(object):
-    def __init__(self, stream, back_track=5, min_tracks=300, min_distance=10.):
-        self.stream = stream
+    RECTIFY_NONE = 0
+    RECTIFY_POINTS = 1
+    RECTIFY_FRAMES = 2
+
+    def __init__(self, video_stream, gyro_stream,
+                 rectification_strategy=RectificationStrategy.NONE, fps=30.,
+                 back_track=5, min_tracks=300, min_distance=10.):
+        self.video_stream = video_stream
+        try:
+            q = gyro_stream.orientation_at(0.0)
+        except AttributeError:
+            raise ValueError("gyro stream class must have orientation_at() method")
+
+        self.gyro_stream = gyro_stream
+        self.rectification_strategy = rectification_strategy
         self.min_tracks = min_tracks
         self.min_distance = min_distance
         self.back_track = back_track
@@ -96,44 +119,65 @@ class VideoTracker(object):
         self.stored_tracks = []
         self.frames = FrameStore(back_track)
 
-    def run(self, max_frame=None, start=0, visualize=False):
+    def run(self, max_frame=None, start=0, visualize=False, save_frames_dir=None):
         final_framenum = None
         if visualize:
             cv2.namedWindow("tracks", cv2.WINDOW_AUTOSIZE)
 
-        for framenum, frame in enumerate(self.stream):
+        for framenum, frame in enumerate(self.video_stream):
             final_framenum = framenum
             if framenum < start:
                 continue
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            self.frames.add(framenum, frame)
+
+            if self.rectification_strategy in (RectificationStrategy.FRAMES, RectificationStrategy.POINTS):
+                frame_time = float(framenum) / self.video_stream.camera_model.frame_rate
+                rectmap = rectification_map(self.video_stream.camera_model,
+                                            self.gyro_stream.orientations,
+                                            self.gyro_stream.timestamps,
+                                            np.eye(3),
+                                            frame_time)
+                rectified_frame = rectify(frame, rectmap).astype('uint8')
+
+            if self.rectification_strategy == RectificationStrategy.FRAMES:
+                tracking_frame = rectified_frame
+                save_frame = tracking_frame
+            elif self.rectification_strategy == RectificationStrategy.POINTS:
+                tracking_frame = frame
+                save_frame = rectified_frame
+            else:
+                tracking_frame = frame
+                save_frame = frame
+
+            if save_frames_dir:
+                fname = os.path.join(save_frames_dir, 'frame_{:d}.jpg'.format(framenum))
+                cv2.imwrite(fname, save_frame)
+
+            # Tracking requires grayscale images
+            tracking_frame = cv2.cvtColor(tracking_frame, cv2.COLOR_BGR2GRAY)
+            self.frames.add(framenum, tracking_frame)
 
             # Track from last to current frame
-            self.forward_track(framenum, frame)
+            self.forward_track(framenum, tracking_frame)
 
             # Run retrack step
             self.retrack(framenum)
 
             # Fill out with more tracks if necessary
             if len(self.active_tracks) < self.min_tracks:
-                self.more_tracks(framenum, frame)
+                self.more_tracks(framenum, tracking_frame)
 
             if visualize:
-                draw = np.dstack((frame, frame, frame))
+                draw = np.dstack((tracking_frame, tracking_frame, tracking_frame))
                 for t in self.active_tracks:
                     cv2.circle(draw, tuple(t[framenum]), 10, (255, 0, 0))
-                for t in self.stored_tracks:
-                    try:
-                        cv2.circle(draw, tuple(t[framenum]), 10, (0, 255, 255))
-                    except IndexError:
-                        pass
+
                 label = 'Frame: {:d} - Active: {:d}, Stored: {:d}'.format(framenum,
                                                                           len(self.active_tracks),
                                                                           len(self.stored_tracks))
                 font_size = 2
                 thickness = 3
                 (tw, th), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_COMPLEX, font_size, thickness)
-                rows, cols = frame.shape
+                rows, cols = draw.shape[:2]
                 textpos = cols - tw - 10, th + 10
                 cv2.putText(draw, label, textpos, cv2.FONT_HERSHEY_COMPLEX, font_size, (0, 0, 255), thickness=thickness)
                 cv2.imshow("tracks", draw)
@@ -144,6 +188,10 @@ class VideoTracker(object):
             if max_frame is not None and framenum > max_frame:
                 break
 
+        if visualize:
+            cv2.destroyAllWindows()
+            cv2.waitKey(1)
+
         # Retrack all active tracks and save those still alive
         for t in self.active_tracks:
             t.last_retrack = None # Force a retrack
@@ -153,7 +201,7 @@ class VideoTracker(object):
 
     def more_tracks(self, framenum, frame):
         logging.info("Frame %d: Fetching more points", framenum)
-        max_corners = self.min_tracks + len(self.active_tracks)
+        max_corners = int(1.5*self.min_tracks)# + len(self.active_tracks)
         quality_level = 0.07
         new_points = cv2.goodFeaturesToTrack(frame, max_corners, quality_level, self.min_distance)
         if self.active_tracks:
@@ -170,8 +218,6 @@ class VideoTracker(object):
                 track = Track()
                 track.add_measurement(framenum, point.reshape(2))
                 new_tracks.append(track)
-                if len(new_tracks) + len(self.active_tracks) > self.min_tracks:
-                    break
         self.active_tracks.extend(new_tracks)
         logging.info("Frame %d: Added %d new tracks", framenum, len(new_tracks))
 
@@ -208,7 +254,6 @@ class VideoTracker(object):
         candidates = []
         candidates.extend((t for t in self.dropped_tracks if len(t) >= self.back_track))
         candidates.extend((t for t in self.active_tracks if needs_retrack(t)))
-        print(len(candidates), len(self.active_tracks), len(self.dropped_tracks), [t.id for t in candidates])
 
         if not candidates:
             logging.info('Frame %d: Nothing to retrack', framenum)
@@ -260,13 +305,83 @@ class VideoTracker(object):
             if t in candidates:
                 if t in success_tracks:
                     new_active.append(t)
+                    t.last_retrack = framenum
             else:
-                t.last_retrack = framenum
                 new_active.append(t)
 
         self.active_tracks = new_active
         logging.info('Frame %d: Back tracked %d of %d points, stored %d, %d still active',
             framenum, len(success_tracks), len(candidates), new_stored_count, len(self.active_tracks))
+
+    def remap_image_point(self, p, framenum):
+        camera_model = self.video_stream.camera_model
+        rows, cols = camera_model.image_size
+        row_delta = camera_model.readout / rows
+        if self.rectification_strategy == RectificationStrategy.POINTS:
+            x, y = p
+            t0 = float(framenum) / camera_model.frame_rate
+            t_mid = t0 + (rows / 2.0) * row_delta
+            t_p = t0 + y * row_delta
+            q_mid = self.gyro_stream.orientation_at(t_mid)
+            q_p = self.gyro_stream.orientation_at(t_p)
+            R_mid = crisp.rotations.quat_to_rotation_matrix(q_mid)
+            R_p = crisp.rotations.quat_to_rotation_matrix(q_p)
+            R = np.dot(R_mid.T, R_p)
+            P = np.dot(R, camera_model.unproject(p))
+            p_rect = camera_model.project(P)
+            return p_rect
+        else:
+            return p
+
+    def select_frames(self, min_ratio=0.9):
+        min_frame = min(t.first_framenum for t in self.stored_tracks)
+        max_frame = max(t.last_framenum for t in self.stored_tracks)
+        frames = range(min_frame, max_frame + 1)
+        selected = [frames[0]] # Always start at first frame
+        global_max_step = 10
+        current = selected[-1]
+        while True:
+            max_step = min(global_max_step, frames[-1] - current)
+            if max_step < 1:
+                break
+            next_frames = [current + step for step in range(1, max_step+1)]
+            tracks = [t for t in self.stored_tracks if current in t]
+            next_counts = np.array([len([t for t in tracks if frame in t]) for frame in next_frames])
+            max_count = next_counts[0]
+            idxlist = np.flatnonzero(next_counts / max_count < min_ratio)
+            if len(idxlist) < 1:  # All good, pick last
+                next_frame = next_frames[-1]
+            elif len(idxlist) < max_step:  # Pick last good
+                i = idxlist[0]
+                next_frame = next_frames[i - 1]
+            else:  # No good, pick first
+                next_frame = next_frames[0]
+            selected.append(next_frame)
+            current = next_frame
+
+        return selected
+
+
+    def save_openmvg_putative(self, output_directory):
+        putative_fname = os.path.join(output_directory, 'matches.putative.txt')
+        frame_numbers = self.select_frames()
+        max_frame = max(t.last_framenum for t in self.stored_tracks)
+        zeropad = int(np.log10(max_frame) + 0.5) + 1
+        descriptor_to_track = {} # frame -> (track id -> descriptor id)
+        with open(putative_fname, 'w') as put_matches:
+            for framenum in frame_numbers:
+                id_map = {} # track id to local id
+                feat_file = 'frame_{:0{zeropad}d}.feat'.format(framenum, zeropad=zeropad)
+                with open(feat_file, 'w') as feat_file:
+                    local_tracks = [t for t in self.stored_tracks if framenum in t]
+                    for local_id, track in enumerate(local_tracks):
+                        p = self.remap_image_point(track[framenum], framenum)
+                        x, y = p
+                        # line: x, y, scale, orientation
+                        feat_file.write('{:.2f} {:.2f} 1.0 0.0\n'.format(x, y))
+                        id_map[track.id] = local_id
+                descriptor_to_track[framenum] = id_map
+
 
     def save_visualsfm(self, output_directory, fake_frames=False):
         min_frame = min(t.first_framenum for t in self.stored_tracks)
@@ -281,8 +396,8 @@ class VideoTracker(object):
                 res += ord(c) << (8 * i)
             return res
 
-        name = chars_to_int('SIFT') #ord('S') + (ord('I') << 8) + (ord('F') << 16) + (ord('T') << 24)
-        version = chars_to_int('V4.0') #ord('V') + ord('4') << 8 + ord('.') << 16 + ord('0') << 24
+        name = chars_to_int('SIFT')
+        version = chars_to_int('V4.0')
         eof = struct.pack('i', chars_to_int(chr(0xff) + 'EOF'))
         zeropad = int(np.log10(max_frame) + 0.5) + 1
 
@@ -292,7 +407,11 @@ class VideoTracker(object):
             frame_fileroot = os.path.join(output_directory, 'frame_{n:0{zeropad}d}'.format(n=framenum, zeropad=zeropad))
             sift_filename = frame_fileroot + '.sift'
             frame_filename = frame_fileroot + '.jpg'
-            if fake_frames:
+
+            run_saved_frame = os.path.join(output_directory, 'frame_{:d}.jpg'.format(framenum))
+            if os.path.exists(run_saved_frame):
+                shutil.move(run_saved_frame, frame_filename)
+            elif fake_frames:
                 cv2.imwrite(frame_filename, np.zeros((128, 128), dtype='uint8'))
                 logging.debug('Wrote fake frame %s', frame_filename)
 
@@ -302,7 +421,8 @@ class VideoTracker(object):
                 f.write(header)
                 # Location Data
                 for local_id, track in enumerate(local_tracks):
-                    x, y = track[framenum].astype('float32')
+                    p = self.remap_image_point(track[framenum], framenum)
+                    x, y = p
                     location = struct.pack('5f', x, y, 0., 0., 0.) # color, scale, orientation not set
                     f.write(location)
                     id_map[track.id] = local_id
@@ -336,17 +456,27 @@ class VideoTracker(object):
                     f.write('\n')
         logging.info('Wrote %s', match_filename)
 
-
-
 if __name__ == "__main__":
-    VIDEO_PATH = '/home/hannes/Datasets/gopro-gyro-dataset/rccar.MP4'
+    DATA_ROOT = '/home/hannes/Datasets/gopro-gyro-dataset/'
+    SEQUENCE_NAME = 'walk'
+    VIDEO_PATH = os.path.join(DATA_ROOT, SEQUENCE_NAME + '.MP4')
     CAMERA_PATH = '/home/hannes/Code/crisp/hero3_atan.hdf'
+    OUTPUT_DIR = './trackingdata_walk_frames/'
+    shutil.rmtree(OUTPUT_DIR, ignore_errors=True)
+    os.makedirs(OUTPUT_DIR)
+
+    logging.getLogger().setLevel(logging.INFO)
 
     camera_model = AtanCameraModel.from_hdf(CAMERA_PATH)
     video = VideoStream.from_file(camera_model, VIDEO_PATH)
-    tracker = VideoTracker(video)
-    tracker.run(start=100, max_frame=120, visualize=False)
-    tracker.save_visualsfm('/tmp/output', fake_frames=True)
+    gyro = CalibratedGyroStream.from_directory(DATA_ROOT, SEQUENCE_NAME)
+    print(gyro, dir(gyro))
+    print(gyro.orientation_at(0.0))
+    strategy = RectificationStrategy.FRAMES
+    tracker = VideoTracker(video, gyro, min_tracks=2000, back_track=8, rectification_strategy=strategy)
+    #tracker.run(start=100, max_frame=900, visualize=False, save_frames_dir=OUTPUT_DIR)
+    tracker.run(start=60, visualize=True, save_frames_dir=OUTPUT_DIR)
+    tracker.save_visualsfm(OUTPUT_DIR, fake_frames=False)
     #tracker.run(visualize=True)
     print('Stored tracks: {:d}, still active: {:d}'.format(len(tracker.stored_tracks), len(tracker.active_tracks)))
     import shutil
