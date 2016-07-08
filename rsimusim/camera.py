@@ -42,30 +42,33 @@ class PinholeModel(object):
         return Y
 
 class CameraPlatform(Platform):
-    def __init__(self, camera_model, simulation=None, trajectory=None):
+    def __init__(self, camera_model, Rci=np.eye(3), pci=np.zeros((3,1)), simulation=None, trajectory=None):
         self.timer = IdealTimer(self)
-        self.camera = Camera(camera_model, self)
+        self.camera = Camera(camera_model, Rci, pci, self)
         Platform.__init__(self, simulation, trajectory)
 
     @property
     def components(self):
         return [self.timer, self.camera]
 
-def project_at_time(t, X, trajectory, camera_model):
+def project_at_time(t, X, Rci, pci, trajectory, camera_model):
+    # Spline->World (really IMU->World) transforms
     Rws = np.array(trajectory.rotation(t).toMatrix())
     pws = trajectory.position(t)
-    #T = np.hstack((R.T, np.dot(R.T, -p)))
-    T = np.hstack((Rws.T, np.dot(Rws.T, -pws)))
-    Xh = np.ones((4,1))
-    Xh[:3] = X.reshape(3,1)
-    X_camera = np.dot(T, Xh)
+
+    # Landmark in IMU frame
+    X_imu = np.dot(Rws.T, (X.reshape(3,1) - pws))
+
+    # Landmark in Camera frame
+    X_camera = np.dot(Rci, X_imu) + pci
+
     y = camera_model.project(X_camera)
     return y, X_camera
 
-def _project_point_rs(X, t0, camera_model, trajectory):
+def _project_point_rs(X, t0, camera_model, Rci, pci, trajectory):
     def root_func(r):
         t = t0 + r * camera_model.readout / camera_model.rows
-        (u, v), X_camera = project_at_time(t, X, trajectory, camera_model)
+        (u, v), X_camera = project_at_time(t, X, Rci, pci, trajectory, camera_model)
         if X_camera[2] < 0:
             print("Behind camera", X.ravel())
         return v - r
@@ -75,10 +78,10 @@ def _project_point_rs(X, t0, camera_model, trajectory):
     except ValueError:
         return None, None
     vt = t0 + v * camera_model.readout / camera_model.rows
-    y, _ = project_at_time(vt, X, trajectory, camera_model)
+    y, _ = project_at_time(vt, X, Rci, pci, trajectory, camera_model)
     return y, vt
 
-def projection_worker(camera_model, trajectory, inq, outq):
+def projection_worker(camera_model, Rci, pci, trajectory, inq, outq):
     logger.debug("Worker process started")
     while True:
         object = inq.get()
@@ -86,14 +89,16 @@ def projection_worker(camera_model, trajectory, inq, outq):
             inq.put(object)
             break # Stop processing
         lm_id, lm_pos, t = object
-        image_point, _ = _project_point_rs(lm_pos, t, camera_model, trajectory)
+        image_point, _ = _project_point_rs(lm_pos, t, camera_model, Rci, pci, trajectory)
         outq.put((lm_id, image_point))
     logger.debug("Worker process quit normally")
 
 class Camera(Component):
-    def __init__(self, camera_model, platform):
+    def __init__(self, camera_model, Rci, pci, platform):
         self.current_frame = 0
         self.camera_model = camera_model
+        self.Rci = Rci
+        self.pci = pci
 
         if USE_MULTIPROC:
             self.inq = multiprocessing.Queue()
@@ -109,9 +114,9 @@ class Camera(Component):
     def start_multiproc(self):
         if not USE_MULTIPROC:
             raise RuntimeError("Multiprocessing is turned off in code")
-        self.procs = [multiprocessing.Process(target=projection_worker,
-                                              args=(self.camera_model, self.platform.trajectory, self.inq, self.outq))
-                          for _ in range(multiprocessing.cpu_count())]
+        args = (self.camera_model, self.Rci, self.pci, self.platform.trajectory, self.inq, self.outq)
+        self.procs = [ multiprocessing.Process(target=projection_worker, args=args)
+                          for _ in range(multiprocessing.cpu_count()) ]
         for proc in self.procs:
             proc.daemon = True # Kill process on parent exit
             proc.start()
