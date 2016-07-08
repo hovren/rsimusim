@@ -1,7 +1,11 @@
+# Build directories
+/build/
+/*.egg-info/
+
 *.pyc
 *.sift
 *.mat
 *.jpg
 *.npy
-.idea
-.ipynb_checkpoints
+/.idea/
+/.ipynb_checkpoints/
