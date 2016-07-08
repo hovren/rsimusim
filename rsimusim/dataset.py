@@ -1,5 +1,7 @@
 from __future__ import print_function, division
 
+import bisect
+
 import h5py
 import numpy as np
 from imusim.maths.quaternions import QuaternionArray
@@ -91,6 +93,11 @@ class Dataset(object):
         instance.landmarks = sorted(instance.landmarks, key=lambda lm: lm.id)
 
         return instance
+
+    def visible_landmarks(self, t):
+        i = bisect.bisect_left(self._landmark_bounds, t)
+        interval_id = i - 1
+        return [lm for lm in self.landmarks if interval_id in lm.visibility]
 
     def _update_trajectory(self):
         smooth_rotations = False
