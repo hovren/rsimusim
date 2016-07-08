@@ -1,0 +1,34 @@
+dataset:
+  path: example_dataset.h5
+  start: 5.0
+  end: 7.0
+
+camera:
+  type: AtanCameraModel
+#  path: hero3_atan.hdf
+  rows: 1080
+  cols: 1920
+  framerate: 30.0
+  readout: 0.0316734
+  parameters:
+    camera_matrix: [853.127, 0.000, 988.063, 0.000, 873.550, 525.711, 0.000, 0.000, 1.000]
+    dist_param: 0.8894356
+    dist_center: [0.00291108,  0.00041897]
+
+relative_pose:
+  rotation: [ 0.13275685,  0.13732874,  0.98158873, -0.70847681, -0.67943167,
+        0.19087489,  0.69313508, -0.7207728 ,  0.00709502]
+  translation: [12.45, -11, 128]
+
+imu:
+  type: DefaultIMU
+  sample_rate: 300
+  accelerometer:
+    noise: [0.01, 0.002, 1.345e-5]
+    bias: [-0.23, 0.05, 0.001]
+  gyroscope:
+    noise: 2.67e-5
+    bias: [-0.9, 0.1, 0.031]
+
+
+

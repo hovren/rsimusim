@@ -1,0 +1,27 @@
+dataset:
+  path: walk.h5
+  start: 2.5
+  end: 14.0
+
+camera:
+  type: AtanCameraModel
+#  path: hero3_atan.hdf
+  rows: 1080
+  cols: 1920
+  framerate: 30.0
+  readout: 0.0316734
+  parameters:
+    camera_matrix: [853.127, 0.000, 988.063, 0.000, 873.550, 525.711, 0.000, 0.000, 1.000]
+    dist_param: 0.8894356
+    dist_center: [0.00291108,  0.00041897]
+
+relative_pose:
+  # A faulty orientation
+  rotation: [1, 1, 0, 0, 1, 0, 0, 0, 1]
+  translation: [0, 0, 0]
+
+imu:
+  type: IdealIMU
+  sample_rate: 300
+
+
