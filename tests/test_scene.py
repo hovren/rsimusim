@@ -24,7 +24,7 @@ class MiscSceneTests(unittest.TestCase):
 
 class SceneTests(unittest.TestCase):
     def setUp(self):
-        self.ds = Dataset.from_file('example_dataset.h5')
+        self.ds = Dataset.from_file('data/example_dataset.h5')
 
     def test_visibility(self):
         env = SceneEnvironment(dataset=self.ds)

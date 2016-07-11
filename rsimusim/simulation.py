@@ -1,6 +1,7 @@
 from __future__ import print_function, division
 
 from numbers import Number
+import os
 
 import yaml
 import numpy as np
@@ -74,10 +75,10 @@ class RollingShutterImuSimulation:
         self.imu_behaviour = BasicIMUBehaviour(self.imu, imu_dt, initialTime=self.config.start_time)
 
     @classmethod
-    def from_config(cls, path):
+    def from_config(cls, path, datasetdir=None):
         instance = cls()
         instance.config = SimulationConfiguration()
-        instance.config.parse_yaml(path)
+        instance.config.parse_yaml(path, datasetdir)
         instance._setup()
 
         return instance
@@ -176,14 +177,14 @@ class SimulationConfiguration:
         self.text = None
         self.path = None
 
-    def parse_yaml(self, path):
+    def parse_yaml(self, path, datasetdir=None):
         text = open(path, 'r').read()
         conf = yaml.safe_load(text)
         self.text = text
         self.path = path
         self._load_camera(conf)
         self._load_relpose(conf)
-        self._load_dataset(conf)
+        self._load_dataset(conf, datasetdir)
         self.imu_config = self._load_imu_config(conf)
 
     def _load_camera(self, conf):
@@ -211,9 +212,19 @@ class SimulationConfiguration:
         self.Rci = R
         self.pci = np.array(pinfo['translation']).reshape(3,1)
 
-    def _load_dataset(self, conf):
+    def _load_dataset(self, conf, datasetdir=None):
         dinfo = conf['dataset']
-        ds = Dataset.from_file(dinfo['path'])
+        search_paths = ['.'] if datasetdir is None else [datasetdir, '.']
+        ds = None
+        for root in search_paths:
+            ds_path = os.path.join(root, dinfo['path'])
+            if os.path.exists(ds_path):
+                ds = Dataset.from_file(ds_path)
+                break
+
+        if not ds:
+            raise ValueError("Failed to find {} in search paths {}".format(dinfo['path'], search_paths))
+
         self.dataset = ds
         self.dataset_path = dinfo['path']
         self.start_time = dinfo['start']

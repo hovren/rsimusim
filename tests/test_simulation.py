@@ -13,10 +13,11 @@ from rsimusim.simulation import RollingShutterImuSimulation, SimulationResults
 from rsimusim.inertial import DefaultIMU
 from crisp.camera import AtanCameraModel
 
-EXAMPLE_SIMULATION_CONFIG = 'example_simulation_config.yml'
+EXAMPLE_SIMULATION_CONFIG = 'data/example_simulation_config.yml'
 
 class SimulationTests(unittest.TestCase):
     def setUp(self):
+        self.sim = RollingShutterImuSimulation.from_config(EXAMPLE_SIMULATION_CONFIG, datasetdir='data/')
         self.tempfiles = []
 
     def tearDown(self):
@@ -28,8 +29,7 @@ class SimulationTests(unittest.TestCase):
         return self.tempfiles[-1]
 
     def test_load_atan_camera(self):
-        sim = RollingShutterImuSimulation.from_config(EXAMPLE_SIMULATION_CONFIG)
-        camera_model = sim.config.camera_model
+        camera_model = self.sim.config.camera_model
         self.assertEqual(camera_model.__class__, AtanCameraModel)
         self.assertEqual(camera_model.columns, 1920)
         self.assertEqual(camera_model.rows, 1080)
@@ -43,34 +43,31 @@ class SimulationTests(unittest.TestCase):
         assert_almost_equal(camera_model.readout, 0.031673400000000004, decimal=3)
 
     def test_load_relative_pose(self):
-        sim = RollingShutterImuSimulation.from_config(EXAMPLE_SIMULATION_CONFIG)
         expected_R = np.array([[ 0.13275685,  0.13732874,  0.98158873],
                                [-0.70847681, -0.67943167,  0.19087489],
                                [ 0.69313508, -0.7207728 ,  0.00709502]])
         expected_p = np.array([12.45, -11, 128]).reshape(3,1)
-        assert_almost_equal(sim.config.Rci, expected_R)
-        assert_almost_equal(sim.config.pci, expected_p)
+        assert_almost_equal(self.sim.config.Rci, expected_R)
+        assert_almost_equal(self.sim.config.pci, expected_p)
 
 
     def test_faulty_rotation(self):
         with self.assertRaises(ValueError):
-            sim = RollingShutterImuSimulation.from_config('example_simulation_config_faulty_rotation.yml')
+            sim = RollingShutterImuSimulation.from_config('data/example_simulation_config_faulty_rotation.yml', datasetdir='data/')
 
     def test_load_dataset(self):
-        sim = RollingShutterImuSimulation.from_config(EXAMPLE_SIMULATION_CONFIG)
-        self.assertEqual(sim.config.dataset.name, "example_walk")
+        self.assertEqual(self.sim.config.dataset.name, "example_walk")
         expected_start = 5.0
         expected_end = 7.0
-        assert_almost_equal(sim.config.start_time, expected_start)
-        assert_almost_equal(sim.config.end_time, expected_end)
+        assert_almost_equal(self.sim.config.start_time, expected_start)
+        assert_almost_equal(self.sim.config.end_time, expected_end)
 
     def test_load_dataset_wrong_time(self):
         with self.assertRaises(ValueError):
-            sim = RollingShutterImuSimulation.from_config('example_simulation_config_faulty_time.yml')
+            sim = RollingShutterImuSimulation.from_config('data/example_simulation_config_faulty_time.yml', datasetdir='data/')
 
     def test_load_imu_config(self):
-        sim = RollingShutterImuSimulation.from_config(EXAMPLE_SIMULATION_CONFIG)
-        imu_config = sim.config.imu_config
+        imu_config = self.sim.config.imu_config
         assert_almost_equal(imu_config['sample_rate'], 300.)
         expected_acc_noise = np.array([0.01, 0.002, 1.345e-5]).reshape(3,1)
         expected_acc_bias = np.array([-0.23, 0.05, 0.001]).reshape(3,1)
@@ -82,13 +79,11 @@ class SimulationTests(unittest.TestCase):
         assert_almost_equal(imu_config['gyroscope']['bias'], expected_gyro_bias)
 
     def test_load_imu(self):
-        sim = RollingShutterImuSimulation.from_config(EXAMPLE_SIMULATION_CONFIG)
-        self.assertEqual(sim.imu.__class__, DefaultIMU)
+        self.assertEqual(self.sim.imu.__class__, DefaultIMU)
 
     def test_run_simulation(self):
-        sim = RollingShutterImuSimulation.from_config(EXAMPLE_SIMULATION_CONFIG)
         t0 = datetime.datetime.now()
-        results = sim.run()
+        results = self.sim.run()
         t1 = datetime.datetime.now()
         self.assertLess((results.time_started - t0).total_seconds(), 0.1)
         self.assertLess((t1 - results.time_finished).total_seconds(), 0.1)
@@ -101,24 +96,23 @@ class SimulationTests(unittest.TestCase):
         gyro_ts = results.gyroscope_measurements
         acc_ts = results.accelerometer_measurements
 
-        self.assertLess(image_ts.timestamps[0] - sim.config.start_time, 1. / sim.config.camera_model.frame_rate)
-        assert_almost_equal(acc_ts.timestamps[0] - sim.config.start_time, 1. / sim.config.imu_config['sample_rate'])
-        assert_almost_equal(gyro_ts.timestamps[0] - sim.config.start_time, 1. / sim.config.imu_config['sample_rate'])
+        self.assertLess(image_ts.timestamps[0] - self.sim.config.start_time, 1. / self.sim.config.camera_model.frame_rate)
+        assert_almost_equal(acc_ts.timestamps[0] - self.sim.config.start_time, 1. / self.sim.config.imu_config['sample_rate'])
+        assert_almost_equal(gyro_ts.timestamps[0] - self.sim.config.start_time, 1. / self.sim.config.imu_config['sample_rate'])
 
-        expected_duration = sim.config.end_time - sim.config.start_time
+        expected_duration = self.sim.config.end_time - self.sim.config.start_time
         image_duration = image_ts.timestamps[-1] - image_ts.timestamps[0]
         gyro_duration = gyro_ts.timestamps[-1] - gyro_ts.timestamps[0]
         acc_duration = acc_ts.timestamps[-1] - acc_ts.timestamps[0]
         # Expected max error is double the time delta because of the subtraction
         eps = 1e-6
-        self.assertLess(np.abs(image_duration - expected_duration), 2. / sim.config.camera_model.frame_rate + eps)
-        self.assertLess(np.abs(gyro_duration - expected_duration), 2. / sim.config.imu_config['sample_rate'] + eps)
-        self.assertLess(np.abs(acc_duration - expected_duration), 2. / sim.config.imu_config['sample_rate'] + eps)
+        self.assertLess(np.abs(image_duration - expected_duration), 2. / self.sim.config.camera_model.frame_rate + eps)
+        self.assertLess(np.abs(gyro_duration - expected_duration), 2. / self.sim.config.imu_config['sample_rate'] + eps)
+        self.assertLess(np.abs(acc_duration - expected_duration), 2. / self.sim.config.imu_config['sample_rate'] + eps)
         assert_almost_equal(acc_ts.timestamps, gyro_ts.timestamps)
 
     def test_save_simulation(self):
-        sim = RollingShutterImuSimulation.from_config(EXAMPLE_SIMULATION_CONFIG)
-        result = sim.run()
+        result = self.sim.run()
         fname = self.get_temp()
         result.save(fname)
 

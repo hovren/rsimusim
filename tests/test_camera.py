@@ -21,7 +21,7 @@ CAMERA_MATRIX = np.array(
 
 class CameraSimulationTest(unittest.TestCase):
     def setUp(self):
-        self.ds = Dataset.from_file('example_dataset.h5')
+        self.ds = Dataset.from_file('data/example_dataset.h5')
 
         environment = SceneEnvironment(dataset=self.ds)
         sim = Simulation(environment=environment)
