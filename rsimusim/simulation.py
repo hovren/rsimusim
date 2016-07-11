@@ -226,7 +226,7 @@ class SimulationConfiguration:
             raise ValueError("Failed to find {} in search paths {}".format(dinfo['path'], search_paths))
 
         self.dataset = ds
-        self.dataset_path = dinfo['path']
+        self.dataset_path = ds_path
         self.start_time = dinfo['start']
         self.end_time = dinfo['end']
         if self.start_time < ds.trajectory.startTime:
