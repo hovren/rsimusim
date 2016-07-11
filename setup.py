@@ -32,7 +32,7 @@ requires = [ 'numpy',
 ]
 
 scripts = [os.path.join('scripts/', fname) for fname in [
-    'run_simulation.py',
+    'rsimurun.py',
 ]]
 
 

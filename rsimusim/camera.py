@@ -82,7 +82,7 @@ def _project_point_rs(X, t0, camera_model, Rci, pci, trajectory):
     return y, vt
 
 def projection_worker(camera_model, Rci, pci, trajectory, inq, outq):
-    logger.debug("Worker process started")
+    logger.debug("Worker process (pid=%d) started", multiprocessing.current_process().pid)
     while True:
         object = inq.get()
         if object is None:
@@ -91,7 +91,7 @@ def projection_worker(camera_model, Rci, pci, trajectory, inq, outq):
         lm_id, lm_pos, t = object
         image_point, _ = _project_point_rs(lm_pos, t, camera_model, Rci, pci, trajectory)
         outq.put((lm_id, image_point))
-    logger.debug("Worker process quit normally")
+    logger.debug("Worker process (pid=%d) quit normally", multiprocessing.current_process().pid)
 
 class Camera(Component):
     def __init__(self, camera_model, Rci, pci, platform):

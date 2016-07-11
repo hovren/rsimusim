@@ -30,14 +30,14 @@ class RollingShutterImuSimulation:
         self.imu = None
         self.imu_behaviour = None
 
-    def run(self):
+    def run(self, progress=False):
         # Camera simulator runs multiprocessed
         self.camera.camera.start_multiproc()
 
         # Simulate
         self.simulation.time = self.config.start_time
         t0 = datetime.datetime.now()
-        self.simulation.run(self.config.end_time)
+        self.simulation.run(self.config.end_time, printProgress=progress)
         t1 = datetime.datetime.now()
 
         # Stop camera worker processes
