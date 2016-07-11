@@ -4,11 +4,16 @@ from numbers import Number
 
 import yaml
 import numpy as np
+import h5py
+import time
+import datetime
 
 from crisp.camera import AtanCameraModel
 from imusim.simulation.base import Simulation
 from imusim.platforms.imus import IdealIMU
 from imusim.behaviours.imu import BasicIMUBehaviour
+from imusim.maths.quaternions import QuaternionArray
+from imusim.utilities.time_series import TimeSeries
 
 from .camera import CameraPlatform, PinholeModel, BasicCameraBehaviour
 from .inertial import DefaultIMU
@@ -30,22 +35,25 @@ class RollingShutterImuSimulation:
 
         # Simulate
         self.simulation.time = self.config.start_time
+        t0 = datetime.datetime.now()
         self.simulation.run(self.config.end_time)
+        t1 = datetime.datetime.now()
 
         # Stop camera worker processes
         self.camera.camera.stop_multiproc()
 
-    @property
-    def image_measurements(self):
-        return self.camera.camera.measurements
+        # Assemble results
+        results = SimulationResults()
+        results.config_path = self.config.path
+        results.config_text = self.config.text
+        results.dataset_path = self.config.dataset_path
+        results.time_started = t0
+        results.time_finished = t1
+        results.image_measurements = self.camera.camera.measurements
+        results.accelerometer_measurements = self.imu.accelerometer.rawMeasurements
+        results.gyroscope_measurements = self.imu.gyroscope.rawMeasurements
 
-    @property
-    def gyroscope_measurements(self):
-        return self.imu.gyroscope.rawMeasurements
-
-    @property
-    def accelerometer_measurements(self):
-        return self.imu.accelerometer.rawMeasurements
+        return results
 
     def _setup(self):
         self.environment = SceneEnvironment(self.config.dataset)
@@ -74,23 +82,109 @@ class RollingShutterImuSimulation:
 
         return instance
 
+class SimulationResults:
+    __datetime_format = '%Y-%m-%d %H:%M:%S.%f'
+
+    def __init__(self):
+        self.time_started = None
+        self.time_finished = None
+        self.config_text = None
+        self.config_path = None
+        self.dataset_path = None
+        self.image_measurements = None
+        self.gyroscope_measurements = None
+        self.accelerometer_measurements = None
+
+    @classmethod
+    def from_file(cls, path):
+        instance = cls()
+        def load_timeseries(group):
+            times = group['timestamps']
+            values = group['data']
+            return TimeSeries(timestamps=times, values=values)
+
+        def load_observations(h5_file):
+            framegroup = h5_file['camera']
+            frames = sorted(framegroup.keys())
+            ts = TimeSeries()
+            for fkey in frames:
+                group = framegroup[fkey]
+                obs_dict = {lm_id: ip.reshape(2,1) for lm_id, ip in zip(group['landmarks'].value,
+                                                           group['measurements'].value.T)}
+                t = group['time'].value
+                ts.add(t, obs_dict)
+            return ts
+
+        def load_datetime(h5ds):
+            return datetime.datetime.strptime(h5ds.value, cls.__datetime_format)
+
+        with h5py.File(path, 'r') as f:
+            instance.time_started = load_datetime(f['time_started'])
+            instance.time_finished = load_datetime(f['time_finished'])
+            instance.config_text = f['config_text'].value
+            instance.config_path = f['config_path'].value
+            instance.dataset_path = f['dataset_path'].value
+            instance.gyroscope_measurements = load_timeseries(f['gyroscope'])
+            instance.accelerometer_measurements = load_timeseries(f['accelerometer'])
+            instance.image_measurements = load_observations(f)
+
+        return instance
+
+    def save(self, path):
+        def save_timeseries(ts, group):
+            group['data'] = ts.values
+            group['timestamps'] = ts.timestamps
+
+        def save_observations(ts, h5_file):
+            framegroup = h5_file.create_group('camera')
+            pad = int(np.ceil(np.log10(len(ts)+0.5)))
+            for framenum, (t, obs) in enumerate(zip(ts.timestamps, ts.values)):
+                landmarks = np.array(sorted(list(obs.keys())), dtype='int')
+                if len(landmarks) < 1:
+                    measurements = []
+                else:
+                    measurements = np.hstack([obs[lm_id].reshape(2,1) for lm_id in landmarks])
+                group = framegroup.create_group('frame_{framenum:0{pad}d}'.format(framenum=framenum, pad=pad))
+                group['landmarks'] = landmarks
+                group['measurements'] = measurements
+                group['time'] = t
+
+        def convert_datetime(dtime):
+            return dtime.strftime(self.__datetime_format)
+
+        with h5py.File(path, 'w') as f:
+            f['time_started'] = convert_datetime(self.time_started)
+            f['time_finished'] = convert_datetime(self.time_finished)
+            f['config_text'] = self.config_text
+            f['config_path'] = self.config_path
+            f['dataset_path'] = self.dataset_path
+            save_timeseries(self.gyroscope_measurements, f.create_group('gyroscope'))
+            save_timeseries(self.accelerometer_measurements, f.create_group('accelerometer'))
+            save_observations(self.image_measurements, f)
+
+
 class SimulationConfiguration:
     def __init__(self):
         self.camera_model = None
         self.Rci = None
         self.pci = None
         self.dataset = None
+        self.dataset_path = None
         self.start_time = None
         self.end_time = None
         self.imu_config = None
+        self.text = None
+        self.path = None
 
     def parse_yaml(self, path):
-        conf = yaml.safe_load(open(path, 'r'))
+        text = open(path, 'r').read()
+        conf = yaml.safe_load(text)
+        self.text = text
+        self.path = path
         self._load_camera(conf)
         self._load_relpose(conf)
         self._load_dataset(conf)
         self.imu_config = self._load_imu_config(conf)
-
 
     def _load_camera(self, conf):
         cinfo = conf['camera']
@@ -121,6 +215,7 @@ class SimulationConfiguration:
         dinfo = conf['dataset']
         ds = Dataset.from_file(dinfo['path'])
         self.dataset = ds
+        self.dataset_path = dinfo['path']
         self.start_time = dinfo['start']
         self.end_time = dinfo['end']
         if self.start_time < ds.trajectory.startTime:

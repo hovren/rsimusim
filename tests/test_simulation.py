@@ -1,16 +1,32 @@
 from __future__ import print_function, division
 
 import unittest
-import numpy as np
-from numpy.testing import assert_almost_equal
+import tempfile
+import time
+import datetime
+import os
 
-from rsimusim.simulation import RollingShutterImuSimulation
+import numpy as np
+from numpy.testing import assert_almost_equal, assert_equal
+
+from rsimusim.simulation import RollingShutterImuSimulation, SimulationResults
 from rsimusim.inertial import DefaultIMU
 from crisp.camera import AtanCameraModel
 
 EXAMPLE_SIMULATION_CONFIG = 'example_simulation_config.yml'
 
 class SimulationTests(unittest.TestCase):
+    def setUp(self):
+        self.tempfiles = []
+
+    def tearDown(self):
+        for fname in self.tempfiles:
+            os.unlink(fname)
+
+    def get_temp(self):
+        self.tempfiles.append(tempfile.mkstemp(prefix='simtests_')[1])
+        return self.tempfiles[-1]
+
     def test_load_atan_camera(self):
         sim = RollingShutterImuSimulation.from_config(EXAMPLE_SIMULATION_CONFIG)
         camera_model = sim.config.camera_model
@@ -48,6 +64,10 @@ class SimulationTests(unittest.TestCase):
         assert_almost_equal(sim.config.start_time, expected_start)
         assert_almost_equal(sim.config.end_time, expected_end)
 
+    def test_load_dataset_wrong_time(self):
+        with self.assertRaises(ValueError):
+            sim = RollingShutterImuSimulation.from_config('example_simulation_config_faulty_time.yml')
+
     def test_load_imu_config(self):
         sim = RollingShutterImuSimulation.from_config(EXAMPLE_SIMULATION_CONFIG)
         imu_config = sim.config.imu_config
@@ -67,10 +87,19 @@ class SimulationTests(unittest.TestCase):
 
     def test_run_simulation(self):
         sim = RollingShutterImuSimulation.from_config(EXAMPLE_SIMULATION_CONFIG)
-        sim.run()
-        image_ts = sim.image_measurements
-        gyro_ts = sim.gyroscope_measurements
-        acc_ts = sim.accelerometer_measurements
+        t0 = datetime.datetime.now()
+        results = sim.run()
+        t1 = datetime.datetime.now()
+        self.assertLess((results.time_started - t0).total_seconds(), 0.1)
+        self.assertLess((t1 - results.time_finished).total_seconds(), 0.1)
+
+        self.assertEqual(results.config_text, open(EXAMPLE_SIMULATION_CONFIG).read())
+        self.assertEqual(results.config_path, EXAMPLE_SIMULATION_CONFIG)
+        self.assertEqual(results.dataset_path, 'example_dataset.h5')
+
+        image_ts = results.image_measurements
+        gyro_ts = results.gyroscope_measurements
+        acc_ts = results.accelerometer_measurements
 
         self.assertLess(image_ts.timestamps[0] - sim.config.start_time, 1. / sim.config.camera_model.frame_rate)
         assert_almost_equal(acc_ts.timestamps[0] - sim.config.start_time, 1. / sim.config.imu_config['sample_rate'])
@@ -86,3 +115,34 @@ class SimulationTests(unittest.TestCase):
         self.assertLess(np.abs(gyro_duration - expected_duration), 2. / sim.config.imu_config['sample_rate'] + eps)
         self.assertLess(np.abs(acc_duration - expected_duration), 2. / sim.config.imu_config['sample_rate'] + eps)
         assert_almost_equal(acc_ts.timestamps, gyro_ts.timestamps)
+
+    def test_save_simulation(self):
+        sim = RollingShutterImuSimulation.from_config(EXAMPLE_SIMULATION_CONFIG)
+        result = sim.run()
+        fname = self.get_temp()
+        result.save(fname)
+
+        def assert_timeseries_equal(ts1, ts2):
+            assert_equal(ts1.values, ts2.values)
+            assert_equal(ts1.timestamps, ts2.timestamps)
+
+        def assert_image_obs_equal(im1, im2):
+            assert_equal(im1.timestamps, im2.timestamps)
+            for obs1, obs2 in zip(im1.values, im2.values):
+                self.assertEqual(sorted(obs1.keys()), sorted(obs2.keys()))
+                for key in obs1:
+                    ip1 = obs1[key]
+                    ip2 = obs2[key]
+                    assert_equal(ip1, ip2)
+
+        # Load from saved file and test if same values
+        loaded = SimulationResults.from_file(fname)
+        self.assertEqual(loaded.time_started, result.time_started)
+        self.assertEqual(loaded.time_finished, result.time_finished)
+        self.assertEqual(loaded.config_text, result.config_text)
+        self.assertEqual(loaded.config_path, result.config_path)
+        self.assertEqual(loaded.dataset_path, result.dataset_path)
+        assert_timeseries_equal(loaded.gyroscope_measurements, result.gyroscope_measurements)
+        assert_timeseries_equal(loaded.accelerometer_measurements, result.accelerometer_measurements)
+        assert_image_obs_equal(loaded.image_measurements, result.image_measurements)
+
