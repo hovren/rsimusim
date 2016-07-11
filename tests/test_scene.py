@@ -4,8 +4,7 @@ import unittest
 
 import numpy as np
 
-from rsimusim.dataset import Dataset, DatasetBuilder
-from rsimusim.sfm import VisualSfmResult
+from rsimusim.dataset import Dataset
 from rsimusim.scene import SceneEnvironment
 
 def bound_index(t, boundaries):
@@ -25,14 +24,7 @@ class MiscSceneTests(unittest.TestCase):
 
 class SceneTests(unittest.TestCase):
     def setUp(self):
-        db = DatasetBuilder()
-        sfm = VisualSfmResult.from_file('example.nvm', 30, load_measurements=True)
-        db.add_source_sfm(sfm)
-        db.set_position_source('sfm')
-        db.set_orientation_source('sfm')
-        db.set_landmark_source('sfm')
-
-        self.ds = db.build()
+        self.ds = Dataset.from_file('example_dataset.h5')
 
     def test_visibility(self):
         env = SceneEnvironment(dataset=self.ds)

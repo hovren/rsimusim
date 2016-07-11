@@ -8,8 +8,7 @@ from imusim.simulation.base import Simulation
 from imusim.platforms.imus import IdealIMU
 from imusim.behaviours.imu import BasicIMUBehaviour
 
-from rsimusim.dataset import Dataset, DatasetBuilder
-from rsimusim.sfm import VisualSfmResult
+from rsimusim.dataset import Dataset
 from rsimusim.scene import SceneEnvironment
 from rsimusim.camera import CameraPlatform, PinholeModel, BasicCameraBehaviour
 
@@ -22,13 +21,7 @@ CAMERA_MATRIX = np.array(
 
 class CameraSimulationTest(unittest.TestCase):
     def setUp(self):
-        db = DatasetBuilder()
-        sfm = VisualSfmResult.from_file('example.nvm', 30, load_measurements=True)
-        db.add_source_sfm(sfm)
-        db.set_position_source('sfm')
-        db.set_orientation_source('sfm')
-        db.set_landmark_source('sfm')
-        self.ds = db.build()
+        self.ds = Dataset.from_file('example_dataset.h5')
 
         environment = SceneEnvironment(dataset=self.ds)
         sim = Simulation(environment=environment)
