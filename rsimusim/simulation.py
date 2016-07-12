@@ -230,8 +230,18 @@ class SimulationConfiguration:
 
         self.dataset = ds
         self.dataset_path = ds_path
-        self.start_time = dinfo['start']
-        self.end_time = dinfo['end']
+        try:
+            self.start_time = dinfo['start']
+            logger.info("Configuration is missing dataset>start key. Using trajectory start time.")
+        except KeyError:
+            self.start_time = ds.trajectory.startTime
+
+        try:
+            self.end_time = dinfo['end']
+        except KeyError:
+            self.end_time = ds.trajectory.endTime
+            logger.info("Configuration is missing dataset>end key. Using trajectory end time.")
+
         if self.start_time < ds.trajectory.startTime:
             raise ValueError("Invalid start time")
         if self.end_time > ds.trajectory.endTime:

@@ -66,6 +66,14 @@ class SimulationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             sim = RollingShutterImuSimulation.from_config('data/example_simulation_config_faulty_time.yml', datasetdir='data/')
 
+    def test_load_dataset_notime(self):
+        sim = RollingShutterImuSimulation.from_config('data/example_simulation_config_notime.yml', datasetdir='data/')
+        expected_start = 0.933333333
+        expected_end = 29.033333333
+        assert_almost_equal(sim.config.start_time, expected_start)
+        assert_almost_equal(sim.config.end_time, expected_end)
+
+
     def test_load_imu_config(self):
         imu_config = self.sim.config.imu_config
         assert_almost_equal(imu_config['sample_rate'], 300.)
