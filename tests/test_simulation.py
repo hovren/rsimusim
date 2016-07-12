@@ -90,7 +90,7 @@ class SimulationTests(unittest.TestCase):
 
         self.assertEqual(results.config_text, open(EXAMPLE_SIMULATION_CONFIG).read())
         self.assertEqual(results.config_path, EXAMPLE_SIMULATION_CONFIG)
-        self.assertEqual(results.dataset_path, 'example_dataset.h5')
+        self.assertEqual(results.dataset_path, 'data/example_dataset.h5')
 
         image_ts = results.image_measurements
         gyro_ts = results.gyroscope_measurements
