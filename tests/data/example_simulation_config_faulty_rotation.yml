@@ -4,7 +4,7 @@ dataset:
   end: 14.0
 
 camera:
-  type: AtanCameraModel
+  type: Atan
 #  path: hero3_atan.hdf
   rows: 1080
   cols: 1920

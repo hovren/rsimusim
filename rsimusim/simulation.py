@@ -192,19 +192,24 @@ class SimulationConfiguration:
 
     def _load_camera(self, conf):
         cinfo = conf['camera']
-        ctype = cinfo['type']
+        ctype = cinfo['type'].lower()
         rows = cinfo['rows']
         cols = cinfo['cols']
         framerate = cinfo['framerate']
         readout = cinfo['readout']
-        if not ctype == 'AtanCameraModel':
-            raise ValueError("No such camera model: {}".format(ctype))
 
         params = cinfo['parameters']
         camera_matrix = np.array(params['camera_matrix']).reshape(3,3)
-        wc = np.array(params['dist_center'])
-        lgamma = params['dist_param']
-        camera = AtanCameraModel([cols, rows], framerate, readout, camera_matrix, wc, lgamma)
+
+        if ctype == 'atan':
+            wc = np.array(params['dist_center'])
+            lgamma = params['dist_param']
+            camera = AtanCameraModel([cols, rows], framerate, readout, camera_matrix, wc, lgamma)
+        elif ctype == 'pinhole':
+            camera = PinholeModel(camera_matrix, [cols, rows], readout, framerate)
+        else:
+            raise ValueError("No such camera model: {}".format(ctype))
+
         self.camera_model = camera
 
     def _load_relpose(self, conf):

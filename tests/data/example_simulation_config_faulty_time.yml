@@ -5,7 +5,7 @@ dataset:
   end: 30.0 # Above max time
 
 camera:
-  type: AtanCameraModel
+  type: Atan
   rows: 1080
   cols: 1920
   framerate: 30.0

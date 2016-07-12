@@ -12,6 +12,7 @@ from numpy.testing import assert_almost_equal, assert_equal
 from rsimusim.simulation import RollingShutterImuSimulation, SimulationResults
 from rsimusim.inertial import DefaultIMU
 from crisp.camera import AtanCameraModel
+from rsimusim.camera import PinholeModel
 
 EXAMPLE_SIMULATION_CONFIG = 'data/example_simulation_config.yml'
 
@@ -40,6 +41,19 @@ class SimulationTests(unittest.TestCase):
         assert_almost_equal(camera_model.camera_matrix, expected_K, decimal=3)
         assert_almost_equal(camera_model.wc, [ 0.00291108,  0.00041897], decimal=3)
         assert_almost_equal(camera_model.lgamma, 0.88943551779681562, decimal=3)
+        assert_almost_equal(camera_model.readout, 0.031673400000000004, decimal=3)
+
+    def test_load_pinhole_camera(self):
+        sim = RollingShutterImuSimulation.from_config('data/example_simulation_config_pinhole.yml', datasetdir='data/')
+        camera_model = sim.config.camera_model
+        self.assertEqual(camera_model.__class__, PinholeModel)
+        self.assertEqual(camera_model.columns, 1920)
+        self.assertEqual(camera_model.rows, 1080)
+        assert_almost_equal(camera_model.frame_rate, 30.0)
+        expected_K = np.array([[ 853.12703455,    0.        ,  988.06311256],
+                               [   0.        ,  873.54956631,  525.71056312],
+                               [   0.        ,    0.        ,    1.        ]])
+        assert_almost_equal(camera_model.K, expected_K, decimal=3)
         assert_almost_equal(camera_model.readout, 0.031673400000000004, decimal=3)
 
     def test_load_relative_pose(self):
