@@ -1,4 +1,5 @@
-from collections import namedtuple
+from __future__ import print_function, division
+
 import multiprocessing
 import logging
 
