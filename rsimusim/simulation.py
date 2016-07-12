@@ -8,6 +8,9 @@ import numpy as np
 import h5py
 import time
 import datetime
+import logging
+
+logger = logging.getLogger("rsimusim.simulation")
 
 from crisp.camera import AtanCameraModel
 from imusim.simulation.base import Simulation

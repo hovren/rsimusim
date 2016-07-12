@@ -11,7 +11,7 @@ from imusim.utilities.time_series import TimeSeries
 
 USE_MULTIPROC = True
 
-logger = logging.getLogger()
+logger = logging.getLogger("rsimusim.camera")
 
 class PinholeModel(object):
     def __init__(self, K, size, readout, frame_rate):
@@ -46,6 +46,7 @@ class CameraPlatform(Platform):
         self.timer = IdealTimer(self)
         self.camera = Camera(camera_model, Rci, pci, self)
         Platform.__init__(self, simulation, trajectory)
+        logger.info("Initialized camera platform with Rci=%s, pci=%s", Rci, pci)
 
     @property
     def components(self):
@@ -139,12 +140,14 @@ class Camera(Component):
 
     def sample(self, t):
         framenum = self.current_frame
+        logger.debug("Sampling frame %d at time %.5f", framenum, t)
         self.current_frame += 1
         environment = self.platform.simulation.environment
         pos = self.platform.trajectory.position(t)
         orientation = self.platform.trajectory.rotation(t)
 
         landmarks = environment.observe(t, pos, orientation)
+        logger.debug("There are %d potential landmarks", len(landmarks))
         if USE_MULTIPROC:
             if not self.procs:
                 self.start_multiproc()
@@ -164,7 +167,7 @@ class Camera(Component):
         image_observations = {lm_id : image_point for lm_id, image_point in image_observation_list
                               if 0 <= image_point[0] <= self.camera_model.columns \
                                 and 0 <= image_point[1] < self.camera_model.rows}
-
+        logger.debug("Frame %d had %d valid observations", framenum, len(image_observations))
         return framenum, t, image_observations
 
     def project_point_rs(self, X, t0):

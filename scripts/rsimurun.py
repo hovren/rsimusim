@@ -6,7 +6,7 @@ import sys
 import os
 
 logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger()
+logger = logging.getLogger("rsimurun")
 
 from rsimusim.simulation import RollingShutterImuSimulation
 
