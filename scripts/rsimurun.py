@@ -5,9 +5,6 @@ import logging
 import sys
 import os
 
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger("rsimurun")
-
 from rsimusim.simulation import RollingShutterImuSimulation
 
 parser = argparse.ArgumentParser()
@@ -18,8 +15,11 @@ parser.add_argument('--loglevel', default='INFO', choices=['DEBUG', 'INFO', 'WAR
 parser.add_argument('--show-progress', action='store_true')
 args = parser.parse_args()
 
+# Setup logging
 loglevel = getattr(logging, args.loglevel.upper())
-logger.setLevel(loglevel)
+logging.basicConfig(level=loglevel)
+logger = logging.getLogger("rsimurun")
+
 
 if os.path.exists(args.out):
     logger.error('Outfile {} already exists'.format(args.out))
