@@ -126,6 +126,12 @@ class SimulationTests(unittest.TestCase):
         image_duration = image_ts.timestamps[-1] - image_ts.timestamps[0]
         gyro_duration = gyro_ts.timestamps[-1] - gyro_ts.timestamps[0]
         acc_duration = acc_ts.timestamps[-1] - acc_ts.timestamps[0]
+
+        expected_image_samples = int(image_duration * 30.0)
+        expected_imu_samples = int(gyro_duration * 300.0)
+        self.assertAlmostEqual(len(image_ts), expected_image_samples, delta=1.0)
+        self.assertAlmostEqual(len(gyro_ts), expected_imu_samples, delta=3.0)
+
         # Expected max error is double the time delta because of the subtraction
         eps = 1e-6
         self.assertLess(np.abs(image_duration - expected_duration), 2. / self.sim.config.camera_model.frame_rate + eps)
