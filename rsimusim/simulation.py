@@ -120,7 +120,9 @@ class SimulationResults:
             return ts
 
         def load_datetime(h5ds):
-            return datetime.datetime.strptime(h5ds.value, cls.__datetime_format)
+            time_data = h5ds.value
+            time_str = time_data.decode('utf8')
+            return datetime.datetime.strptime(time_str, cls.__datetime_format)
 
         with h5py.File(path, 'r') as f:
             instance.time_started = load_datetime(f['time_started'])
