@@ -14,7 +14,7 @@ from rsimusim.inertial import DefaultIMU
 from crisp.camera import AtanCameraModel
 from rsimusim.camera import PinholeModel
 
-EXAMPLE_SIMULATION_CONFIG = 'data/example_simulation_config.yml'
+EXAMPLE_SIMULATION_CONFIG = 'data/config_default.yml'
 
 class SimulationTests(unittest.TestCase):
     def setUp(self):
@@ -44,7 +44,7 @@ class SimulationTests(unittest.TestCase):
         assert_almost_equal(camera_model.readout, 0.031673400000000004, decimal=3)
 
     def test_load_pinhole_camera(self):
-        sim = RollingShutterImuSimulation.from_config('data/example_simulation_config_pinhole.yml', datasetdir='data/')
+        sim = RollingShutterImuSimulation.from_config('data/config_pinhole.yml', datasetdir='data/')
         camera_model = sim.config.camera_model
         self.assertEqual(camera_model.__class__, PinholeModel)
         self.assertEqual(camera_model.columns, 1920)
@@ -67,7 +67,7 @@ class SimulationTests(unittest.TestCase):
 
     def test_faulty_rotation(self):
         with self.assertRaises(ValueError):
-            sim = RollingShutterImuSimulation.from_config('data/example_simulation_config_faulty_rotation.yml', datasetdir='data/')
+            sim = RollingShutterImuSimulation.from_config('data/config_bad_rotation.yml', datasetdir='data/')
 
     def test_load_dataset(self):
         self.assertEqual(self.sim.config.dataset.name, "example_walk")
@@ -78,10 +78,10 @@ class SimulationTests(unittest.TestCase):
 
     def test_load_dataset_wrong_time(self):
         with self.assertRaises(ValueError):
-            sim = RollingShutterImuSimulation.from_config('data/example_simulation_config_faulty_time.yml', datasetdir='data/')
+            sim = RollingShutterImuSimulation.from_config('data/config_bad_time.yml', datasetdir='data/')
 
     def test_load_dataset_notime(self):
-        sim = RollingShutterImuSimulation.from_config('data/example_simulation_config_notime.yml', datasetdir='data/')
+        sim = RollingShutterImuSimulation.from_config('data/config_notime.yml', datasetdir='data/')
         expected_start = 0.933333333
         expected_end = 29.033333333
         assert_almost_equal(sim.config.start_time, expected_start)
