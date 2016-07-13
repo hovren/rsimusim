@@ -77,7 +77,7 @@ def _project_point_rs(X, t0, camera_model, Rci, pci, trajectory):
         t = t0 + r * camera_model.readout / camera_model.rows
         (u, v), X_camera = project_at_time(t, X, Rci, pci, trajectory, camera_model)
         if X_camera[2] < 0:
-            print("Behind camera", X.ravel())
+            raise ValueError("Behind camera")
         return v - r
 
     try:
