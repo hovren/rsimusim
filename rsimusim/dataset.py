@@ -81,7 +81,7 @@ class Dataset(object):
             instance._landmark_bounds = landmarks_group['visibility_bounds'].value
             positions = landmarks_group['positions'].value
             colors = landmarks_group['colors'].value
-            landmark_keys = landmarks_group['visibility'].keys()
+            landmark_keys = list(landmarks_group['visibility'].keys())
             landmark_keys.sort(key=lambda key: int(key))
             for lm_key in landmark_keys:
                 lm_id = int(lm_key)

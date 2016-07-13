@@ -121,7 +121,7 @@ class SimulationResults:
 
         def load_datetime(h5ds):
             time_data = h5ds.value
-            time_str = time_data.decode('utf8')
+            time_str = time_data.decode('utf8') if isinstance(time_data, bytes) else time_data
             return datetime.datetime.strptime(time_str, cls.__datetime_format)
 
         with h5py.File(path, 'r') as f:
