@@ -31,11 +31,16 @@ class PinholeModel(object):
 
     def project(self, points):
         """Project points to image plane"""
+        if points.ndim == 1:
+            points = points.reshape(3, 1)
+
         y = np.dot(self.K, points)
         y /= y[2]
         return y[:2]
 
     def unproject(self, image_points):
+        if image_points.ndim == 1:
+            image_points = image_points.reshape(2,1)
         xh = np.ones((3, image_points.shape[1]))
         xh[:2] = image_points
         Y = np.dot(np.linalg.inv(self.K), xh)
