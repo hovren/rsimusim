@@ -5,15 +5,13 @@ dataset:
   end: 7.0
 
 camera:
-  type: Atan
+  type: Pinhole
   rows: 1080
   cols: 1920
   framerate: 30.0
   readout: 0.0316734
   parameters:
     camera_matrix: [853.127, 0.000, 988.063, 0.000, 873.550, 525.711, 0.000, 0.000, 1.000]
-    dist_param: 0.8894356
-    dist_center: [0.00291108,  0.00041897]
 
 # Relative pose
 # Transformation from body (IMU) frame to camera frame
@@ -32,6 +30,3 @@ imu:
   gyroscope:
     noise: 2.67e-5
     bias: [-0.9, 0.1, 0.031]
-
-
-

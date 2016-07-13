@@ -5,14 +5,20 @@ import tempfile
 import time
 import datetime
 import os
+import logging
+
+# Disable log output for now
+logging.disable(logging.CRITICAL)
 
 import numpy as np
 from numpy.testing import assert_almost_equal, assert_equal
 
-from rsimusim.simulation import RollingShutterImuSimulation, SimulationResults
+from rsimusim.simulation import RollingShutterImuSimulation, SimulationResults, transform_trajectory
 from rsimusim.inertial import DefaultIMU
 from crisp.camera import AtanCameraModel
 from rsimusim.camera import PinholeModel
+
+from .helpers import assert_timeseries_equal, random_orientation, random_position
 
 EXAMPLE_SIMULATION_CONFIG = 'data/config_default.yml'
 
@@ -24,6 +30,26 @@ class SimulationTests(unittest.TestCase):
     def tearDown(self):
         for fname in self.tempfiles:
             os.unlink(fname)
+
+    def assert_image_obs_equal(self, im1, im2):
+        assert_equal(im1.timestamps, im2.timestamps)
+        for obs1, obs2 in zip(im1.values, im2.values):
+            self.assertEqual(sorted(obs1.keys()), sorted(obs2.keys()))
+            for key in obs1:
+                ip1 = obs1[key]
+                ip2 = obs2[key]
+                assert_equal(ip1, ip2)
+
+    def assert_image_obs_almost_equal(self, im1, im2, max_distance=1.0):
+        assert_equal(im1.timestamps, im2.timestamps)
+        for obs1, obs2 in zip(im1.values, im2.values):
+            self.assertEqual(sorted(obs1.keys()), sorted(obs2.keys()))
+            for key in obs1:
+                ip1 = obs1[key]
+                ip2 = obs2[key]
+                d = np.linalg.norm(ip1 - ip2)
+                print(d)
+                self.assertLessEqual(d, max_distance)
 
     def get_temp(self):
         self.tempfiles.append(tempfile.mkstemp(prefix='simtests_')[1])
@@ -60,10 +86,46 @@ class SimulationTests(unittest.TestCase):
         expected_R = np.array([[ 0.13275685,  0.13732874,  0.98158873],
                                [-0.70847681, -0.67943167,  0.19087489],
                                [ 0.69313508, -0.7207728 ,  0.00709502]])
-        expected_p = np.array([12.45, -11, 128]).reshape(3,1)
+        expected_p = np.array([0.1, -0.12, 0.03]).reshape(3,1)
         assert_almost_equal(self.sim.config.Rci, expected_R)
         assert_almost_equal(self.sim.config.pci, expected_p)
 
+    def test_transformed_trajectory(self):
+        R = np.array(random_orientation().toMatrix())
+        p = random_position().reshape(3,1)
+
+        ds = self.sim.config.dataset
+        old_traj = ds.trajectory
+        new_traj = transform_trajectory(old_traj, R, p)
+
+        num_tested = 0
+        for t in np.linspace(5.3, 6.6, num=20):
+            landmarks = ds.visible_landmarks(t)
+            print(len(landmarks), 'visible at time', t)
+            R1 = np.array(old_traj.rotation(t).toMatrix())
+            p1 = old_traj.position(t).reshape(3,1)
+            R2 = np.array(new_traj.rotation(t).toMatrix())
+            p2 = new_traj.position(t).reshape(3,1)
+            for lm in landmarks:
+                X = lm.position.reshape(3,1)
+                X1 = R1.T @ (X - p1)
+                X2 = R2.T @ (X - p2)
+                X1_hat = R @ X2 + p
+                assert_almost_equal(X1_hat, X1, decimal=2)
+                num_tested += 1
+
+        self.assertGreaterEqual(num_tested, 30)
+
+    def test_relative_pose_projection(self):
+        sim_rel = RollingShutterImuSimulation.from_config('data/config_withrelpose.yml', datasetdir='data/')
+        sim_zero = RollingShutterImuSimulation.from_config('data/config_norelpose.yml', datasetdir='data/')
+
+        result_rel = sim_rel.run()
+        result_zero = sim_zero.run()
+
+        self.assert_image_obs_almost_equal(result_rel.image_measurements,
+                                           result_zero.image_measurements,
+                                           max_distance=0.6)
 
     def test_faulty_rotation(self):
         with self.assertRaises(ValueError):
@@ -82,11 +144,14 @@ class SimulationTests(unittest.TestCase):
 
     def test_load_dataset_notime(self):
         sim = RollingShutterImuSimulation.from_config('data/config_notime.yml', datasetdir='data/')
-        expected_start = 0.933333333
-        expected_end = 29.033333333
+        expected_start = 0.93701929507460235
+        expected_end = 29.028984602284506
         assert_almost_equal(sim.config.start_time, expected_start)
         assert_almost_equal(sim.config.end_time, expected_end)
 
+    def test_load_dataset_not_aligned(self):
+        with self.assertRaises(ValueError):
+            sim = RollingShutterImuSimulation.from_config('data/config_notaligned.yml', datasetdir='data/')
 
     def test_load_imu_config(self):
         imu_config = self.sim.config.imu_config
@@ -144,19 +209,6 @@ class SimulationTests(unittest.TestCase):
         fname = self.get_temp()
         result.save(fname)
 
-        def assert_timeseries_equal(ts1, ts2):
-            assert_equal(ts1.values, ts2.values)
-            assert_equal(ts1.timestamps, ts2.timestamps)
-
-        def assert_image_obs_equal(im1, im2):
-            assert_equal(im1.timestamps, im2.timestamps)
-            for obs1, obs2 in zip(im1.values, im2.values):
-                self.assertEqual(sorted(obs1.keys()), sorted(obs2.keys()))
-                for key in obs1:
-                    ip1 = obs1[key]
-                    ip2 = obs2[key]
-                    assert_equal(ip1, ip2)
-
         # Load from saved file and test if same values
         loaded = SimulationResults.from_file(fname)
         self.assertEqual(loaded.time_started, result.time_started)
@@ -166,5 +218,5 @@ class SimulationTests(unittest.TestCase):
         self.assertEqual(loaded.dataset_path, result.dataset_path)
         assert_timeseries_equal(loaded.gyroscope_measurements, result.gyroscope_measurements)
         assert_timeseries_equal(loaded.accelerometer_measurements, result.accelerometer_measurements)
-        assert_image_obs_equal(loaded.image_measurements, result.image_measurements)
+        self.assert_image_obs_equal(loaded.image_measurements, result.image_measurements)
 

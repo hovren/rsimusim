@@ -5,23 +5,13 @@ dataset:
   end: 7.0
 
 camera:
-  type: Atan
+  type: Pinhole
   rows: 1080
   cols: 1920
   framerate: 30.0
   readout: 0.0316734
   parameters:
     camera_matrix: [853.127, 0.000, 988.063, 0.000, 873.550, 525.711, 0.000, 0.000, 1.000]
-    dist_param: 0.8894356
-    dist_center: [0.00291108,  0.00041897]
-
-# Relative pose
-# Transformation from body (IMU) frame to camera frame
-# such that X_camera = R X_imu + t
-relative_pose:
-  rotation: [ 0.13275685,  0.13732874,  0.98158873, -0.70847681, -0.67943167,
-        0.19087489,  0.69313508, -0.7207728 ,  0.00709502]
-  translation: [0.1, -0.12, 0.03]
 
 imu:
   type: DefaultIMU

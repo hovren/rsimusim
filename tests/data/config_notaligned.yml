@@ -1,6 +1,6 @@
 # Matrices are given on row first order e.g. [r11 r12 r21 r22] for a 2x2 matrix
 dataset:
-  path: example_dataset.h5
+  path: example_dataset_not_aligned.h5
   start: 5.0
   end: 7.0
 

@@ -1,6 +1,7 @@
 import numpy as np
 from imusim.maths.quaternions import Quaternion, QuaternionArray
 from numpy import testing as nt
+from numpy.testing import assert_equal
 
 from crisp.fastintegrate import integrate_gyro_quaternion_uniform
 
@@ -37,6 +38,10 @@ def find_landmark(p, landmarks):
 
     lm = next((lm for lm in landmarks if np.all(lm.position == p)), None)
     return lm
+
+def assert_timeseries_equal(ts1, ts2):
+    assert_equal(ts1.values, ts2.values)
+    assert_equal(ts1.timestamps, ts2.timestamps)
 
 #    best = min(landmarks, key=lambda lm: np.linalg.norm(lm.position - p))
 #    if np.allclose(best.position, p):

@@ -16,7 +16,9 @@ from crisp.camera import AtanCameraModel
 from imusim.simulation.base import Simulation
 from imusim.platforms.imus import IdealIMU
 from imusim.behaviours.imu import BasicIMUBehaviour
-from imusim.maths.quaternions import QuaternionArray
+from imusim.maths.quaternions import QuaternionArray, Quaternion
+from imusim.trajectories.splined import SplinedTrajectory
+from imusim.trajectories.sampled import SampledTrajectory
 from imusim.utilities.time_series import TimeSeries
 
 from .camera import CameraPlatform, PinholeModel, BasicCameraBehaviour
@@ -32,6 +34,9 @@ class RollingShutterImuSimulation:
         self.camera_behaviour = None
         self.imu = None
         self.imu_behaviour = None
+        self.simulation = None
+        self.simulation_trajectory = None
+
 
     def run(self, progress=False):
         # Camera simulator runs multiprocessed
@@ -60,12 +65,18 @@ class RollingShutterImuSimulation:
         return results
 
     def _setup(self):
+        # Trajectory used by the simulation
+        # Not the same as the dataset to account for the relative pose
+        # between camera and IMU
+        self.simulation_trajectory = transform_trajectory(self.config.dataset.trajectory,
+                                                          self.config.Rci, self.config.pci)
+
         self.environment = SceneEnvironment(self.config.dataset)
         self.simulation = Simulation(environment=self.environment)
 
         # Configure camera
         self.camera = CameraPlatform(self.config.camera_model, self.config.Rci, self.config.pci,
-                                     simulation=self.simulation, trajectory=self.config.dataset.trajectory)
+                                     simulation=self.simulation, trajectory=self.simulation_trajectory)
         self.camera_behaviour = BasicCameraBehaviour(self.camera)
 
         # Configure IMU
@@ -73,7 +84,7 @@ class RollingShutterImuSimulation:
         assert imu_conf['type'] == 'DefaultIMU'
         self.imu = DefaultIMU(imu_conf['accelerometer']['bias'], imu_conf['accelerometer']['noise'],
                               imu_conf['gyroscope']['bias'], imu_conf['gyroscope']['noise'],
-                              simulation=self.simulation, trajectory=self.config.dataset.trajectory)
+                              simulation=self.simulation, trajectory=self.simulation_trajectory)
         imu_dt = 1. / self.config.imu_config['sample_rate']
         self.imu_behaviour = BasicIMUBehaviour(self.imu, imu_dt, initialTime=self.config.start_time)
 
@@ -215,12 +226,17 @@ class SimulationConfiguration:
         self.camera_model = camera
 
     def _load_relpose(self, conf):
-        pinfo = conf['relative_pose']
-        R = np.array(pinfo['rotation']).reshape(3,3)
-        if not self._is_rotation(R):
-            raise ValueError("Not a rotation matrix; {}".format(R))
+        try:
+            pinfo = conf['relative_pose']
+            R = np.array(pinfo['rotation']).reshape(3,3)
+            p = np.array(pinfo['translation']).reshape(3,1)
+            if not self._is_rotation(R):
+                raise ValueError("Not a rotation matrix; {}".format(R))
+        except KeyError:
+            R = np.eye(3, dtype='double')
+            p = np.zeros((3,1), dtype='double')
         self.Rci = R
-        self.pci = np.array(pinfo['translation']).reshape(3,1)
+        self.pci = p
 
     def _load_dataset(self, conf, datasetdir=None):
         dinfo = conf['dataset']
@@ -234,6 +250,11 @@ class SimulationConfiguration:
 
         if not ds:
             raise ValueError("Failed to find {} in search paths {}".format(dinfo['path'], search_paths))
+
+        # Make sure dataset has aligned spline knots in trajectory
+        traj = ds.trajectory
+        if not np.all(traj.sampled.rotationKeyFrames.timestamps == traj.sampled.positionKeyFrames.timestamps):
+            raise ValueError("Dataset must have aligned spline knots in trajectory")
 
         self.dataset = ds
         self.dataset_path = ds_path
@@ -283,3 +304,33 @@ class SimulationConfiguration:
 
     def _is_rotation(self, R):
         return np.allclose(np.dot(R, R.T), np.eye(3)) and np.isclose(np.linalg.det(R), 1.0)
+
+def transform_trajectory(trajectory, R, p):
+    """Create new trajectory relative the given transformation
+
+    If R1(t) and p1(t) is the rotation and translation given by inout trajectory, then
+    this function returns a new trajectory that fulfills the following.
+
+    Let X1 = R1(t).T[X - p1(t)] be the coordinate of point X in input trajectory coordinates.
+    Then X2 = R X1 + p is the same point in the coordinate frame of the new trajectory
+    Since X2 = R2(t).T [X - p2(t)] then we have
+    R2(t) = R1(t)R and p2(t) = p1(t) + R1(t)p
+    """
+    ts_q1 = trajectory.sampled.rotationKeyFrames
+    q1 = ts_q1.values
+    ts_p1 = trajectory.sampled.positionKeyFrames
+    p1 = ts_p1.values
+
+    # Rotation
+    Q = Quaternion.fromMatrix(R)
+    q2 = q1 * Q
+    ts_q2 = TimeSeries(ts_q1.timestamps, q2)
+
+    # Translation
+    p2 = p1 + q1.rotateVector(p)
+    ts_p2 = TimeSeries(ts_p1.timestamps, p2)
+
+    sampled = SampledTrajectory(positionKeyFrames=ts_p2, rotationKeyFrames=ts_q2)
+    smoothen = False # MUST be the same as used in Dataset class
+    splined = SplinedTrajectory(sampled, smoothRotations=smoothen)
+    return splined
