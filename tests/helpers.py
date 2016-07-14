@@ -8,13 +8,9 @@ from crisp.fastintegrate import integrate_gyro_quaternion_uniform
 def random_position():
     return np.random.uniform(-10, 10, size=3)
 
-
 def random_orientation():
-    n = np.random.uniform(-1, 1, size=3)
-    n /= np.linalg.norm(n)
-    phi = np.random.uniform(-np.pi, np.pi)
-    qparts = (np.cos(phi/2), n * np.sin(phi/2))
-    qdata = np.hstack(qparts)
+    qdata = np.random.uniform(-2, 2, size=4)
+    qdata /= np.linalg.norm(qdata)
     q = Quaternion(*qdata)
     return q
 
