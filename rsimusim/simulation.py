@@ -53,6 +53,7 @@ class RollingShutterImuSimulation:
 
         # Assemble results
         results = SimulationResults()
+        results.trajectory = self.simulation_trajectory
         results.config_path = self.config.path
         results.config_text = self.config.text
         results.dataset_path = self.config.dataset_path
@@ -135,6 +136,14 @@ class SimulationResults:
             time_str = time_data.decode('utf8') if isinstance(time_data, bytes) else time_data
             return datetime.datetime.strptime(time_str, cls.__datetime_format)
 
+        def load_trajectory(group):
+            pos_ts = load_timeseries(group['position'])
+            rot_array_ts = load_timeseries(group['rotation'])
+            rot_ts = TimeSeries(rot_array_ts.timestamps, QuaternionArray(rot_array_ts.values.T))
+            sampled = SampledTrajectory(positionKeyFrames=pos_ts, rotationKeyFrames=rot_ts)
+            splined = SplinedTrajectory(sampled, smoothRotations=False)
+            return splined
+
         with h5py.File(path, 'r') as f:
             instance.time_started = load_datetime(f['time_started'])
             instance.time_finished = load_datetime(f['time_finished'])
@@ -144,6 +153,7 @@ class SimulationResults:
             instance.gyroscope_measurements = load_timeseries(f['gyroscope'])
             instance.accelerometer_measurements = load_timeseries(f['accelerometer'])
             instance.image_measurements = load_observations(f)
+            instance.trajectory = load_trajectory(f['trajectory'])
 
         return instance
 
@@ -169,6 +179,13 @@ class SimulationResults:
         def convert_datetime(dtime):
             return dtime.strftime(self.__datetime_format)
 
+        def save_trajectory(trajectory, h5f):
+            traj_group = h5f.create_group('trajectory')
+            save_timeseries(trajectory.sampled.positionKeyFrames, traj_group.create_group('position'))
+            rot_ts = TimeSeries(trajectory.sampled.rotationKeyFrames.timestamps,
+                                trajectory.sampled.rotationKeyFrames.values.array.T)
+            save_timeseries(rot_ts, traj_group.create_group('rotation'))
+
         with h5py.File(path, 'w') as f:
             f['time_started'] = convert_datetime(self.time_started)
             f['time_finished'] = convert_datetime(self.time_finished)
@@ -178,6 +195,7 @@ class SimulationResults:
             save_timeseries(self.gyroscope_measurements, f.create_group('gyroscope'))
             save_timeseries(self.accelerometer_measurements, f.create_group('accelerometer'))
             save_observations(self.image_measurements, f)
+            save_trajectory(self.trajectory, f)
 
 
 class SimulationConfiguration:

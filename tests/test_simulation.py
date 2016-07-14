@@ -218,5 +218,15 @@ class SimulationTests(unittest.TestCase):
         self.assertEqual(loaded.dataset_path, result.dataset_path)
         assert_timeseries_equal(loaded.gyroscope_measurements, result.gyroscope_measurements)
         assert_timeseries_equal(loaded.accelerometer_measurements, result.accelerometer_measurements)
+        assert_timeseries_equal(loaded.trajectory.rotationKeyFrames, result.trajectory.rotationKeyFrames)
+        assert_timeseries_equal(loaded.trajectory.positionKeyFrames, result.trajectory.positionKeyFrames)
+        test_times = np.random.uniform(loaded.trajectory.startTime, loaded.trajectory.endTime, size=100)
+        loaded_pos = loaded.trajectory.position(test_times)
+        result_pos = result.trajectory.position(test_times)
+        loaded_rot = loaded.trajectory.rotation(test_times)
+        result_rot = loaded.trajectory.rotation(test_times)
+        assert_almost_equal(loaded_pos, result_pos)
+        assert_almost_equal(loaded_rot.array, result_rot.array)
+
         self.assert_image_obs_equal(loaded.image_measurements, result.image_measurements)
 

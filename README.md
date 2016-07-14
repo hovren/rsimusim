@@ -1,4 +1,15 @@
-Rolling shutter - IMU simulator
----------------------------------
+# Rolling shutter - IMU simulator
 
-TODO: Write this README ;)
+## Simulator workflow
+1. Load configuration from `some_config.yml`
+1. Load dataset specified in configuration file.
+   The dataset is loaded from the current directory, or by using the `datadir=` argument.
+1. Create a **new trajectory** which corresponds to the realtive pose between camera and IMU.
+1. Simulate IMU data and camera measurements
+
+## Using the simulator results
+- Can be loaded by the `SimulationResults` class.
+- Only use the trajectory specified in the `SimulationResults` object. 
+  **Do not** use the trajectory from the corresponding `Dataset` object since this is not the
+   actual trajectory that was used during simulation!
+- You can load the landmarks from the `Dataset` object, however.
