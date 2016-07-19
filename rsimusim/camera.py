@@ -180,8 +180,9 @@ class Camera(Component):
         return _project_point_rs(X, t0, self.camera_model, self.platform.trajectory)
 
 class BasicCameraBehaviour(object):
-    def __init__(self, camera_platform):
+    def __init__(self, camera_platform, end_time):
         self.camera_platform = camera_platform
+        self.end_time = end_time
         camera = self.camera_platform.camera
         camera.measurements = TimeSeries()
         # Start the sampling process
@@ -192,6 +193,11 @@ class BasicCameraBehaviour(object):
 
     def _timer_callback(self):
         sim_time = self.camera_platform.simulation.time
+
+        # If the simulation ends before end of frame, do not sample
+        if sim_time > (self.end_time - self.camera_platform.camera.camera_model.readout):
+            return
+
         sensor_time = sim_time
         framenum, t, observations = self.camera_platform.camera.sample(sensor_time)
         assert t == sensor_time

@@ -78,7 +78,7 @@ class RollingShutterImuSimulation:
         # Configure camera
         self.camera = CameraPlatform(self.config.camera_model, self.config.Rci, self.config.pci,
                                      simulation=self.simulation, trajectory=self.simulation_trajectory)
-        self.camera_behaviour = BasicCameraBehaviour(self.camera)
+        self.camera_behaviour = BasicCameraBehaviour(self.camera, self.config.end_time)
 
         # Configure IMU
         imu_conf = self.config.imu_config
