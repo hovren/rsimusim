@@ -11,7 +11,7 @@ import logging
 logging.disable(logging.CRITICAL)
 
 import numpy as np
-from numpy.testing import assert_almost_equal, assert_equal
+from numpy.testing import assert_almost_equal, assert_equal, assert_array_less
 
 from rsimusim.simulation import RollingShutterImuSimulation, SimulationResults, transform_trajectory
 from rsimusim.inertial import DefaultIMU
@@ -97,6 +97,9 @@ class SimulationTests(unittest.TestCase):
         ds = self.sim.config.dataset
         old_traj = ds.trajectory
         new_traj = transform_trajectory(old_traj, R, p)
+
+        self.assertEqual(old_traj.startTime, new_traj.startTime)
+        self.assertEqual(old_traj.endTime, new_traj.endTime)
 
         num_tested = 0
         for t in np.linspace(5.3, 6.6, num=20):
@@ -196,6 +199,9 @@ class SimulationTests(unittest.TestCase):
         expected_imu_samples = int(gyro_duration * 300.0)
         self.assertAlmostEqual(len(image_ts), expected_image_samples, delta=1.0)
         self.assertAlmostEqual(len(gyro_ts), expected_imu_samples, delta=3.0)
+
+        last_camera_time = self.sim.config.end_time - self.sim.config.camera_model.readout
+        assert_array_less(image_ts.timestamps, last_camera_time)
 
         # Expected max error is double the time delta because of the subtraction
         eps = 1e-6

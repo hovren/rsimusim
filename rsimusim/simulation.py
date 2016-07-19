@@ -72,6 +72,10 @@ class RollingShutterImuSimulation:
         self.simulation_trajectory = transform_trajectory(self.config.dataset.trajectory,
                                                           self.config.Rci, self.config.pci)
 
+        from numpy.testing import assert_equal
+        assert_equal(self.simulation_trajectory.startTime, self.config.dataset.trajectory.startTime)
+        assert_equal(self.simulation_trajectory.endTime, self.config.dataset.trajectory.endTime)
+
         self.environment = SceneEnvironment(self.config.dataset)
         self.simulation = Simulation(environment=self.environment)
 
@@ -301,22 +305,32 @@ class SimulationConfiguration:
         if not imu_type == 'DefaultIMU':
             return ValueError("Unsupported IMU type: {}".format(imu_type))
 
-        def load_vector_or_float(x, only_vector=False):
-            if isinstance(x, Number):
-                if only_vector:
-                    raise ValueError("Expected vector, got float")
-                else:
-                    return x
-            elif isinstance(x, list) and len(x) == 3:
+        def load_bias(x):
+            if isinstance(x, list) and len(x) == 3:
                 return np.array(x).reshape(3,1)
             else:
-                raise ValueError("Failed to load vector/float: {}".format(x))
+                raise ValueError("Bias must be vector of 3 elements")
+
+        def load_noise(x):
+            if isinstance(x, Number):
+                if x >= 0:
+                    return x
+                else:
+                    raise ValueError("Negative noise scale: {}".format(x))
+            elif isinstance(x, list) and len(x) == 3:
+                x = np.array(x).reshape(3,1)
+                if np.any(x == 0.0):
+                    raise ValueError("Noise vectors must not have zero elements")
+                else:
+                    return x
+            else:
+                raise ValueError("Unknown noise type: {}".format(x))
 
         # Store as either float or (3,1) numpy array
-        ainfo['bias'] = load_vector_or_float(ainfo['bias'], only_vector=True)
-        ainfo['noise'] = load_vector_or_float(ainfo['noise'])
-        ginfo['bias'] = load_vector_or_float(ginfo['bias'], only_vector=True)
-        ginfo['noise'] = load_vector_or_float(ginfo['noise'])
+        ainfo['bias'] = load_bias(ainfo['bias'])
+        ainfo['noise'] = load_noise(ainfo['noise'])
+        ginfo['bias'] = load_bias(ginfo['bias'])
+        ginfo['noise'] = load_noise(ginfo['noise'])
 
         return iinfo
 

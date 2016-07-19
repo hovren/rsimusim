@@ -29,7 +29,7 @@ class CameraSimulationTest(unittest.TestCase):
         camera_model = PinholeModel(CAMERA_MATRIX, (1920, 1080), 1./35, 30.0)
         camera = CameraPlatform(camera_model, simulation=sim,
                                 trajectory=trajectory)
-        camera_behaviour = BasicCameraBehaviour(camera)
+        camera_behaviour = BasicCameraBehaviour(camera, trajectory.endTime)
         imu = IdealIMU(simulation=sim, trajectory=trajectory)
         imu_behaviour = BasicIMUBehaviour(imu, 1./100) # 100Hz sample rate
 

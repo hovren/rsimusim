@@ -1,5 +1,7 @@
 from __future__ import print_function, division
 
+from numbers import Number
+
 import numpy as np
 
 #from imusim.platforms.sensors import NoisyTransformedSensor
@@ -25,15 +27,15 @@ class DefaultIMU(StandardIMU):
 
         # To handle the noise free case we need to choose different sensor subclasses
         # (Otherwise the call that creates random data raises an Exception due to zero scale)
-        if acc_noise > 0:
-            self.accelerometer = NoisyTransformedAccelerometer(self, acc_noise, identity, acc_bias)
-        else:
+        if isinstance(acc_noise, Number) and acc_noise <= 0:
             self.accelerometer = TransformedAccelerometer(self, identity, acc_bias)
-
-        if gyro_noise > 0:
-            self.gyroscope = NoisyTransformedGyroscope(self, gyro_noise, identity, gyro_bias)
         else:
+            self.accelerometer = NoisyTransformedAccelerometer(self, acc_noise, identity, acc_bias)
+
+        if isinstance(gyro_noise, Number) and gyro_noise <= 0:
             self.gyroscope = TransformedGyroscope(self, identity, gyro_bias)
+        else:
+            self.gyroscope = NoisyTransformedGyroscope(self, gyro_noise, identity, gyro_bias)
 
         self.magnetometer = IdealMagnetometer(self)
         self.adc = IdealADC(self)
