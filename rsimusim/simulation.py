@@ -216,7 +216,8 @@ class SimulationConfiguration:
         self.path = None
 
     def parse_yaml(self, path, datasetdir=None):
-        text = open(path, 'r').read()
+        with open(path, 'r') as f:
+            text = f.read()
         conf = yaml.safe_load(text)
         self.text = text
         self.path = path
