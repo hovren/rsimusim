@@ -1,4 +1,9 @@
-# Rolling shutter - IMU simulator
+# Rolling shutter camera - IMU simulator
+
+**This package is a work in progress and is not supported in anyway!**
+
+This package is a plugin/extension to the IMUSim package which allows to also
+simulate a moving rolling shutter camera.
 
 ## Simulator workflow
 1. Load configuration from `some_config.yml`
@@ -13,3 +18,7 @@
   **Do not** use the trajectory from the corresponding `Dataset` object since this is not the
    actual trajectory that was used during simulation!
 - You can load the landmarks from the `Dataset` object, however.
+
+## Copyright and License
+Copyright Hannes Ovrén <hannes.ovren@liu.se>.
+Package is released under the GPLv3.
