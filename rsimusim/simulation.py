@@ -283,9 +283,9 @@ class SimulationConfiguration:
         self.dataset_path = ds_path
         try:
             self.start_time = dinfo['start']
-            logger.info("Configuration is missing dataset>start key. Using trajectory start time.")
         except KeyError:
             self.start_time = ds.trajectory.startTime
+            logger.info("Configuration is missing dataset>start key. Using trajectory start time.")
 
         try:
             self.end_time = dinfo['end']
